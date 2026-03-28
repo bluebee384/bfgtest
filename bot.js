@@ -455,25 +455,61 @@ client.on(Events.MessageCreate, async message => {
     ]});
   }
 
-  // ── !revoke <code> ─────────────────────────────────────────────────────────
+  // ── !revoke <amount> <maxUses> ────────────────────────────────────────────
+  // Deletes up to <amount> invites that have <= <maxUses> uses
   if (cmd === 'revoke') {
     if (!requirePerm()) return;
-    const code = args[0];
-    if (!code) return message.reply('❌ Usage: `!revoke <invite_code>`');
+
+    const amount  = parseInt(args[0]);
+    const maxUses = parseInt(args[1]);
+
+    if (isNaN(amount) || isNaN(maxUses) || amount < 1 || maxUses < 0) {
+      return message.reply('❌ Usage: `!revoke <amount> <max_uses>`\nExample: `!revoke 100 3` — deletes up to 100 invites with 3 or fewer uses.');
+    }
+
     try {
-      const invite = await message.guild.invites.fetch(code);
-      await invite.delete(`Manually revoked by ${message.author.tag}`);
-      inviteCache.get(message.guild.id)?.delete(code);
-      return message.reply({ embeds: [
-        new EmbedBuilder().setColor(0xFF4444).setTitle('🔒 Invite Revoked')
-          .addFields(
-            { name: 'Code', value: `\`${code}\``, inline: true },
-            { name: 'Uses', value: `${invite.uses}`, inline: true },
-            { name: 'Revoked By', value: message.author.tag, inline: true },
-          ).setTimestamp()
-      ]});
-    } catch {
-      return message.reply(`❌ Could not find or revoke invite \`${code}\`.`);
+      const invites  = await message.guild.invites.fetch();
+      const targets  = [...invites.values()]
+        .filter(inv => inv.uses <= maxUses)
+        .slice(0, amount);
+
+      if (targets.length === 0) {
+        return message.reply(`❌ No invites found with **${maxUses}** uses or fewer.`);
+      }
+
+      // Send a "working on it" message first since this can take a moment
+      const workingMsg = await message.reply(`⏳ Revoking **${targets.length}** invite(s)...`);
+
+      let deleted = 0;
+      const failures = [];
+      for (const invite of targets) {
+        try {
+          await invite.delete(`Bulk revoke by ${message.author.tag} (≤${maxUses} uses)`);
+          inviteCache.get(message.guild.id)?.delete(invite.code);
+          deleted++;
+        } catch {
+          failures.push(invite.code);
+        }
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(deleted > 0 ? 0xFF4444 : 0xFFA500)
+        .setTitle('🔒 Bulk Revoke Complete')
+        .addFields(
+          { name: 'Requested',  value: `${amount}`,        inline: true },
+          { name: 'Matched',    value: `${targets.length}`, inline: true },
+          { name: 'Deleted',    value: `${deleted}`,        inline: true },
+          { name: 'Max Uses',   value: `≤ ${maxUses}`,      inline: true },
+          { name: 'Revoked By', value: message.author.tag,  inline: true },
+          { name: 'Failed',     value: failures.length > 0 ? `${failures.length}` : 'none', inline: true },
+        )
+        .setTimestamp();
+
+      await workingMsg.delete().catch(() => {});
+      return message.reply({ embeds: [embed] });
+    } catch (err) {
+      console.error('Revoke error:', err);
+      return message.reply('❌ Something went wrong fetching invites.');
     }
   }
 
@@ -483,12 +519,82 @@ client.on(Events.MessageCreate, async message => {
     try {
       const invites = await message.guild.invites.fetch();
       if (!invites.size) return message.reply('No active invites found.');
+
       const sorted = [...invites.values()].sort((a, b) => b.uses - a.uses).slice(0, 10);
-      const desc   = sorted.map((inv, i) => `**${i + 1}.** \`${inv.code}\` — **${inv.uses}** uses — by ${inv.inviter?.tag ?? 'Unknown'}`).join('\n');
-      return message.reply({ embeds: [new EmbedBuilder().setColor(0x5865F2).setTitle('📋 Top Active Invites').setDescription(desc).setTimestamp()] });
+
+      const rows = sorted.map((inv, i) => {
+        const bar      = '█'.repeat(Math.min(Math.round((inv.uses / (sorted[0].uses || 1)) * 8), 8)) +
+                         '░'.repeat(8 - Math.min(Math.round((inv.uses / (sorted[0].uses || 1)) * 8), 8));
+        const created  = inv.createdAt ? `<t:${Math.floor(inv.createdAt.getTime() / 1000)}:R>` : 'unknown';
+        const expires  = inv.expiresAt ? `<t:${Math.floor(inv.expiresAt.getTime() / 1000)}:R>` : 'never';
+        const inviter  = inv.inviter?.tag ?? 'Unknown';
+        return `**${i + 1}.** \`${inv.code}\`
+> \`${bar}\` **${inv.uses}** uses • by **${inviter}** • created ${created} • expires ${expires}`;
+      }).join('\n\n');
+
+      const embed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle('📋 Active Invites')
+        .setDescription(rows)
+        .setFooter({ text: `${invites.size} total active invite(s) in ${message.guild.name}` })
+        .setTimestamp();
+
+      return message.reply({ embeds: [embed] });
     } catch {
       return message.reply('❌ Could not fetch invites.');
     }
+  }
+
+  // ── !test ──────────────────────────────────────────────────────────────────
+  if (cmd === 'test') {
+    if (!requirePerm()) return;
+
+    const checks = [];
+
+    // 1. Bot latency
+    const ping = client.ws.ping;
+    checks.push({ name: '🏓 Latency', ok: ping < 500, value: `${ping}ms` });
+
+    // 2. Welcome channel
+    const welcomeCh = message.guild.channels.cache.get(settings.welcomeChannelId);
+    checks.push({ name: '👋 Welcome Channel', ok: !!welcomeCh, value: welcomeCh ? `<#${welcomeCh.id}>` : 'not set — run `!setwelcome`' });
+
+    // 3. Event channel
+    const eventCh = message.guild.channels.cache.get(settings.eventChannelId);
+    checks.push({ name: '🎁 Event Channel', ok: !!eventCh, value: eventCh ? `<#${eventCh.id}>` : 'not set — run `!setevent`' });
+
+    // 4. Invite cache
+    const cached = inviteCache.get(message.guild.id);
+    checks.push({ name: '📋 Invite Cache', ok: !!cached, value: cached ? `${cached.size} invite(s) cached` : 'empty — may need a restart' });
+
+    // 5. Can fetch invites
+    let canFetch = false;
+    try { await message.guild.invites.fetch(); canFetch = true; } catch {}
+    checks.push({ name: '🔑 Invite Permissions', ok: canFetch, value: canFetch ? 'can read invites' : 'missing Manage Guild permission' });
+
+    // 6. Bot permissions in welcome channel
+    let canSend = false;
+    if (welcomeCh) {
+      const perms = welcomeCh.permissionsFor(message.guild.members.me);
+      canSend = perms?.has('SendMessages') && perms?.has('EmbedLinks');
+    }
+    checks.push({ name: '✉️ Can Send in Welcome', ok: canSend, value: canSend ? 'send messages + embed links ✓' : welcomeCh ? 'missing send/embed perms in that channel' : 'channel not set' });
+
+    // 7. Sweep settings
+    checks.push({ name: '🧹 Auto-Sweep', ok: true, value: `every ${CONFIG.SWEEP_EVERY_JOINS} joins, removes invites with <${CONFIG.SWEEP_MIN_USES} uses` });
+
+    const allGood = checks.every(c => c.ok);
+
+    const desc = checks.map(c => `${c.ok ? '✅' : '❌'} **${c.name}**\n> ${c.value}`).join('\n\n');
+
+    const embed = new EmbedBuilder()
+      .setColor(allGood ? 0x57F287 : 0xFF4444)
+      .setTitle(allGood ? '✅ All Systems Good' : '⚠️ Some Checks Failed')
+      .setDescription(desc)
+      .setFooter({ text: `checked by ${message.author.tag}` })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
   }
 });
 
