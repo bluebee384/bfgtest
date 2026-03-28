@@ -25,10 +25,16 @@ const CONFIG = {
   TOKEN:              process.env.DISCORD_TOKEN,
   WELCOME_CHANNEL_ID: process.env.WELCOME_CHANNEL_ID,
   EVENT_CHANNEL_ID:   process.env.EVENT_CHANNEL_ID,
+  // Set EVENT_BANNER_URL in Railway env vars to a real hosted image URL
+  // e.g. https://i.imgur.com/abc123.png  — do NOT use attachment:// here
+  EVENT_BANNER_URL:   process.env.EVENT_BANNER_URL ?? null,
+  // Set ADMIN_ROLE_ID in Railway env vars to a role ID for admin access
+  // Falls back to the native Administrator permission if not set
+  ADMIN_ROLE_ID:      process.env.ADMIN_ROLE_ID ?? null,
   PREFIX:             '!',
-  SWEEP_LINK_THRESHOLD: 1000, // sweep triggers when total active invite links hits this
-  SWEEP_AMOUNT:         100,  // how many dead links to remove per sweep
-  SWEEP_MIN_USES:       3,    // a link is "dead" if it has fewer than this many uses
+  SWEEP_LINK_THRESHOLD: 1000,
+  SWEEP_AMOUNT:         100,
+  SWEEP_MIN_USES:       3,
 };
 
 if (!CONFIG.TOKEN) { console.error('❌ DISCORD_TOKEN missing.'); process.exit(1); }
@@ -41,18 +47,41 @@ const settings = {
   welcomeColor:     0xFFD700,
   welcomeBanner:    null,
   eventChannelId:   CONFIG.EVENT_CHANNEL_ID,
+  logChannelId:     null, // set via !setlog
 };
 
 // ─── INVITE TRACKING ─────────────────────────────────────────────────────────
 const inviteCache  = new Map(); // guildId -> Map<code, uses>
 const inviterStats = new Map(); // guildId -> Map<userId, inviteCount>
-// Track last known invite count per guild to detect crossing the threshold
 const lastSweepAt  = new Map(); // guildId -> invite count at last sweep
 
 function trackInviter(guildId, userId) {
   if (!inviterStats.has(guildId)) inviterStats.set(guildId, new Map());
   const m = inviterStats.get(guildId);
   m.set(userId, (m.get(userId) ?? 0) + 1);
+}
+
+// ─── LOG BUFFER ───────────────────────────────────────────────────────────────
+// In-memory store of last 50 log entries (shown by !logs)
+const logBuffer = []; // { time, type, description }
+function addLog(type, description) {
+  logBuffer.push({ time: Date.now(), type, description });
+  if (logBuffer.length > 50) logBuffer.shift();
+}
+
+// ─── SEND TO LOG CHANNEL ─────────────────────────────────────────────────────
+async function sendLog(guild, embed) {
+  if (!settings.logChannelId) return;
+  const ch = guild.channels.cache.get(settings.logChannelId);
+  if (ch) await ch.send({ embeds: [embed] }).catch(console.error);
+}
+
+// ─── PERMISSION CHECK ─────────────────────────────────────────────────────────
+// All commands: require Administrator flag OR the ADMIN_ROLE_ID role from env
+function memberIsAdmin(member) {
+  if (member.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
+  if (CONFIG.ADMIN_ROLE_ID && member.roles.cache.has(CONFIG.ADMIN_ROLE_ID)) return true;
+  return false;
 }
 
 // ─── WIZARD STATE ────────────────────────────────────────────────────────────
@@ -122,9 +151,9 @@ function buildWelcomeEmbed(member, data, guild) {
       `🎮 Then dive in — events, giveaways and more are waiting!`
     )
     .addFields(
-      { name: '📌 Rules',        value: data.rulesChannelId   ? `<#${data.rulesChannelId}>`   : '*not set*', inline: true },
-      { name: '🎁 Events',       value: data.eventChannelId   ? `<#${data.eventChannelId}>`   : '*not set*', inline: true },
-      { name: '💬 General',      value: data.generalChannelId ? `<#${data.generalChannelId}>` : '*not set*', inline: true },
+      { name: '📌 Rules',   value: data.rulesChannelId   ? `<#${data.rulesChannelId}>`   : '*not set*', inline: true },
+      { name: '🎁 Events',  value: data.eventChannelId   ? `<#${data.eventChannelId}>`   : '*not set*', inline: true },
+      { name: '💬 General', value: data.generalChannelId ? `<#${data.generalChannelId}>` : '*not set*', inline: true },
     )
     .setFooter({ text: `${guild.name} • good to have you 🍊`, iconURL: guild.iconURL() })
     .setTimestamp();
@@ -134,70 +163,83 @@ function buildWelcomeEmbed(member, data, guild) {
 }
 
 // ─── EVENT — COMPONENTS V2 ────────────────────────────────────────────────────
+// FIX 1: Link buttons (style 5) must NOT have a custom_id — removed it
+// FIX 2: attachment:// URLs are not allowed without a real file upload.
+//         Set EVENT_BANNER_URL env var to a real hosted image URL instead.
+//         If not set, the media gallery block is simply skipped.
 async function postEventComponents(channel) {
+  const innerComponents = [
+    {
+      type: 10,
+      content: '<:buddha:1487034693651267664> Summer BloxFruit Event — Event Rewards',
+    },
+  ];
+
+  // Only include the media gallery if a real hosted URL is configured
+  if (CONFIG.EVENT_BANNER_URL) {
+    innerComponents.push({
+      type: 12,
+      items: [{ media: { url: CONFIG.EVENT_BANNER_URL } }],
+    });
+  }
+
+  innerComponents.push(
+    { type: 14, divider: true, spacing: 1 },
+    {
+      type: 10,
+      content:
+        "<a:announce:1487055874521567272> To celebrate the games activity, we've launched an OFFICIAL EVENT where you can earn FREE Permanent fruits & Robux!\n" +
+        '<a:flowignsand:1487055896243736658> This is a `limited-time` event and comes to an end <t:1774852200:R> ( <t:1774852200:f> ), so be sure to not miss this opportunity! <a:RobuxANIM:1487057805528666285>',
+    },
+    { type: 14, divider: true, spacing: 2 },
+    {
+      type: 10,
+      content:
+        '<:1442164148908851220:1487058441800519680> __ EVENT REWARDS:__ <:1442164148908851220:1487058441800519680>\n' +
+        '> <:e_fc7201_0280:1487162459805716581> <@&1487126325536886914> <:e_fc7201_8100:1487165177009934346> Permanent Yeti <:Yeti:1487166315729780836> / 2,500 Robux <:e_fc7201_3444:1487166961212330205>\n' +
+        '> <:e_f5e50c_6532:1487162569901736037> <@&1487126326749040893> <:e_f5e50c_7750:1487165218298663014> Permanent Kitsune <:KitsuneFruit:1487166342497960008> / 5,000 Robux <:e_f5e50c_8142:1487167022658879520>\n' +
+        '> <:e_f8a047_1847:1487164857517342750> <@&1487126328279830710> <:e_f8a047_8717:1487165262863274045> Permanent Dragon <:dragon:1487166379122626723>/ 7,500 Robux <:e_f8a047_8533:1487167066057474069>\n' +
+        '> <:e_faec69_9471:1487164889213567097> <@&1487126329294983294> <:e_faec69_2107:1487165319389778223> All Permanent Fruits <:perm:1487166401797029971> / 10,000 Robux <:e_faec69_1777:1487167121661104199>',
+    },
+    { type: 14 },
+    {
+      type: 10,
+      content:
+        '<:e_FFAE00_4916:1487105142997127250> EVENT GUIDELINES: <:e_FFAE00_4916:1487105142997127250>\n' +
+        "<:buddha:1487034693651267664> <:wh:1487105260387307580> Inviting alternative accounts to the event is strictly prohibited. <:e_FFAE00_8931:1487105621080801461>\n" +
+        "<:buddha:1487034693651267664> <:wh:1487105260387307580> Failure to follow Discord's Terms of Service and Roblox Community Guidelines may result in removal from the event.\n\n" +
+        '<:e_FFAE00_4914:1487106191690698875> CLAIM INFORMATION: <:e_FFAE00_4914:1487106191690698875>\n' +
+        "<:e_FFAE00_2239:1487106767551856640> Once you're completed your invites, contact an <@&1479764099607953532> to redeem! <:e_FFAE00_3461:1487107024318894233>",
+    },
+    { type: 14 },
+    {
+      type: 1,
+      components: [
+        {
+          // FIX: style 5 = LINK button — must NOT have custom_id
+          type: 2, style: 5,
+          label: 'Check Invite',
+          url: 'https://discohook.app',
+          emoji: { name: '👋' },
+        },
+        {
+          type: 2, style: 2,
+          custom_id: 'p_284704454815518723',
+          label: 'How to invite?',
+          emoji: { name: '❔' },
+        },
+      ],
+    },
+  );
+
   await channel.send({
-    flags: 32768,
+    flags: 32768, // IS_COMPONENTS_V2
     components: [
       {
         type: 17,
         accent_color: 16351749,
         spoiler: false,
-        components: [
-          {
-            type: 10,
-            content: '<:buddha:1487034693651267664> Summer BloxFruit Event — Event Rewards',
-          },
-          {
-            type: 12,
-            items: [{ media: { url: 'attachment://WhatsApp_Image_2026-03-26_at_11.46.07_PM.jpeg' } }],
-          },
-          { type: 14, divider: true, spacing: 1 },
-          {
-            type: 10,
-            content:
-              "<a:announce:1487055874521567272> To celebrate the games activity, we've launched an OFFICIAL EVENT where you can earn FREE Permanent fruits & Robux!\n" +
-              '<a:flowignsand:1487055896243736658> This is a `limited-time` event and comes to an end <t:1774852200:R> ( <t:1774852200:f> ), so be sure to not miss this opportunity! <a:RobuxANIM:1487057805528666285>',
-          },
-          { type: 14, divider: true, spacing: 2 },
-          {
-            type: 10,
-            content:
-              '<:1442164148908851220:1487058441800519680> __ EVENT REWARDS:__ <:1442164148908851220:1487058441800519680>\n' +
-              '> <:e_fc7201_0280:1487162459805716581> <@&1487126325536886914> <:e_fc7201_8100:1487165177009934346> Permanent Yeti <:Yeti:1487166315729780836> / 2,500 Robux <:e_fc7201_3444:1487166961212330205>\n' +
-              '> <:e_f5e50c_6532:1487162569901736037> <@&1487126326749040893> <:e_f5e50c_7750:1487165218298663014> Permanent Kitsune <:KitsuneFruit:1487166342497960008> / 5,000 Robux <:e_f5e50c_8142:1487167022658879520>\n' +
-              '> <:e_f8a047_1847:1487164857517342750> <@&1487126328279830710> <:e_f8a047_8717:1487165262863274045> Permanent Dragon <:dragon:1487166379122626723>/ 7,500 Robux <:e_f8a047_8533:1487167066057474069>\n' +
-              '> <:e_faec69_9471:1487164889213567097> <@&1487126329294983294> <:e_faec69_2107:1487165319389778223> All Permanent Fruits <:perm:1487166401797029971> / 10,000 Robux <:e_faec69_1777:1487167121661104199>',
-          },
-          { type: 14 },
-          {
-            type: 10,
-            content:
-              '<:e_FFAE00_4916:1487105142997127250> EVENT GUIDELINES: <:e_FFAE00_4916:1487105142997127250>\n' +
-              "<:buddha:1487034693651267664> <:wh:1487105260387307580> Inviting alternative accounts to the event is strictly prohibited. <:e_FFAE00_8931:1487105621080801461>\n" +
-              "<:buddha:1487034693651267664> <:wh:1487105260387307580> Failure to follow Discord's Terms of Service and Roblox Community Guidelines may result in removal from the event.\n\n" +
-              '<:e_FFAE00_4914:1487106191690698875> CLAIM INFORMATION: <:e_FFAE00_4914:1487106191690698875>\n' +
-              "<:e_FFAE00_2239:1487106767551856640> Once you're completed your invites, contact an <@&1479764099607953532> to redeem! <:e_FFAE00_3461:1487107024318894233>",
-          },
-          { type: 14 },
-          {
-            type: 1,
-            components: [
-              {
-                type: 2, style: 5,
-                label: 'Check Invite',
-                url: 'https://discohook.app',
-                custom_id: 'p_277375998826123280',
-                emoji: { name: '👋' },
-              },
-              {
-                type: 2, style: 2,
-                custom_id: 'p_284704454815518723',
-                label: 'How to invite?',
-                emoji: { name: '❔' },
-              },
-            ],
-          },
-        ],
+        components: innerComponents,
       },
     ],
   });
@@ -221,22 +263,20 @@ function wizardStatusEmbed(steps, currentStep, data, type) {
     .setFooter({ text: 'respond in this channel to continue ↑' });
 }
 
-// ─── AUTO SWEEP ───────────────────────────────────────────────────────────────
-// Triggered when total active invite count hits SWEEP_LINK_THRESHOLD.
-// Removes up to SWEEP_AMOUNT links that have fewer than SWEEP_MIN_USES uses.
+// ─── AUTO-REVOKE SWEEP ────────────────────────────────────────────────────────
 async function sweepDeadInvites(guild) {
   try {
     const invites = await guild.invites.fetch();
     const dead    = [...invites.values()]
       .filter(i => i.uses < CONFIG.SWEEP_MIN_USES)
-      .sort((a, b) => a.uses - b.uses)      // lowest uses first
-      .slice(0, CONFIG.SWEEP_AMOUNT);        // cap at SWEEP_AMOUNT
+      .sort((a, b) => a.uses - b.uses)
+      .slice(0, CONFIG.SWEEP_AMOUNT);
 
     if (!dead.length) return { swept: 0, codes: [], total: invites.size };
 
     const codes = [];
     for (const inv of dead) {
-      await inv.delete(`Auto-sweep: <${CONFIG.SWEEP_MIN_USES} uses`);
+      await inv.delete(`Auto-revoke: <${CONFIG.SWEEP_MIN_USES} uses`);
       inviteCache.get(guild.id)?.delete(inv.code);
       codes.push(`\`${inv.code}\` — ${inv.uses} use${inv.uses === 1 ? '' : 's'}`);
     }
@@ -258,12 +298,28 @@ client.once(Events.ClientReady, async () => {
   }
 });
 
+// ─── INVITE CREATED ───────────────────────────────────────────────────────────
 client.on(Events.InviteCreate, async inv => {
   const c = inviteCache.get(inv.guild.id) ?? new Map();
   c.set(inv.code, inv.uses);
   inviteCache.set(inv.guild.id, c);
 
-  // ── Check if total link count just crossed a multiple of SWEEP_LINK_THRESHOLD ──
+  // Log invite creation
+  const createDesc =
+    `**Code:** \`${inv.code}\`\n` +
+    `**Created by:** ${inv.inviter?.tag ?? 'Unknown'} (${inv.inviter?.id ?? '?'})\n` +
+    `**Channel:** ${inv.channel ? `<#${inv.channel.id}>` : 'Unknown'}\n` +
+    `**Max uses:** ${inv.maxUses === 0 ? '∞' : inv.maxUses}\n` +
+    `**Expires:** ${inv.maxAge === 0 ? 'Never' : `<t:${Math.floor(Date.now() / 1000) + inv.maxAge}:R>`}`;
+  addLog('invite_created', createDesc);
+  await sendLog(inv.guild, new EmbedBuilder()
+    .setColor(0x57F287)
+    .setTitle('🔗 Invite Link Created')
+    .setDescription(createDesc)
+    .setTimestamp()
+  );
+
+  // ── Auto-Revoke threshold check ───────────────────────────────────────────
   try {
     const allInvites   = await inv.guild.invites.fetch();
     const currentCount = allInvites.size;
@@ -273,40 +329,56 @@ client.on(Events.InviteCreate, async inv => {
 
     if (crossed > lastCrossed) {
       lastSweepAt.set(inv.guild.id, currentCount);
-      console.log(`🧹 [${inv.guild.name}] Hit ${currentCount} invite links — triggering sweep...`);
+      console.log(`🧹 [${inv.guild.name}] Hit ${currentCount} invite links — triggering auto-revoke...`);
 
-      const { swept, codes, total } = await sweepDeadInvites(inv.guild);
+      const { swept, codes } = await sweepDeadInvites(inv.guild);
       const logCh = inv.guild.channels.cache.get(settings.welcomeChannelId);
-      if (logCh) {
-        if (swept > 0) {
-          await logCh.send({ embeds: [
-            new EmbedBuilder()
-              .setColor(0xFF4444)
-              .setTitle('🧹 Auto-Sweep Complete')
-              .setDescription(
-                `Triggered at **${currentCount} active invite links**.\nRemoved **${swept}** link(s) with fewer than **${CONFIG.SWEEP_MIN_USES}** uses:\n\n` +
-                codes.join('\n')
-              )
-              .setTimestamp(),
-          ]});
-        } else {
-          await logCh.send({ embeds: [
-            new EmbedBuilder()
-              .setColor(0xFFA500)
-              .setTitle('🧹 Sweep Triggered — Nothing Removed')
-              .setDescription(`Hit **${currentCount} active links** but found no links with fewer than **${CONFIG.SWEEP_MIN_USES}** uses.`)
-              .setTimestamp(),
-          ]});
-        }
+
+      if (swept > 0) {
+        const sweepDesc =
+          `Triggered at **${currentCount} active invite links**.\n` +
+          `Removed **${swept}** link(s) with fewer than **${CONFIG.SWEEP_MIN_USES}** uses:\n\n` +
+          codes.join('\n');
+        addLog('auto_revoke', sweepDesc);
+        const sweepEmbed = new EmbedBuilder()
+          .setColor(0xFF4444)
+          .setTitle('🧹 Auto-Revoke Complete')
+          .setDescription(sweepDesc)
+          .setTimestamp();
+        if (logCh) await logCh.send({ embeds: [sweepEmbed] });
+        await sendLog(inv.guild, sweepEmbed);
+      } else {
+        const nothingDesc =
+          `Hit **${currentCount} active links** but found no links with fewer than **${CONFIG.SWEEP_MIN_USES}** uses.`;
+        addLog('auto_revoke', nothingDesc);
+        const nothingEmbed = new EmbedBuilder()
+          .setColor(0xFFA500)
+          .setTitle('🧹 Auto-Revoke Triggered — Nothing Removed')
+          .setDescription(nothingDesc)
+          .setTimestamp();
+        if (logCh) await logCh.send({ embeds: [nothingEmbed] });
+        await sendLog(inv.guild, nothingEmbed);
       }
     }
   } catch (err) {
-    console.error('Sweep check error:', err);
+    console.error('Auto-revoke check error:', err);
   }
 });
 
-client.on(Events.InviteDelete, inv => {
+// ─── INVITE DELETED ───────────────────────────────────────────────────────────
+client.on(Events.InviteDelete, async inv => {
   inviteCache.get(inv.guild.id)?.delete(inv.code);
+
+  const deleteDesc =
+    `**Code:** \`${inv.code}\`\n` +
+    `**Channel:** ${inv.channel ? `<#${inv.channel.id}>` : 'Unknown'}`;
+  addLog('invite_deleted', deleteDesc);
+  await sendLog(inv.guild, new EmbedBuilder()
+    .setColor(0xFF4444)
+    .setTitle('🗑️ Invite Link Deleted')
+    .setDescription(deleteDesc)
+    .setTimestamp()
+  );
 });
 
 // ─── MEMBER JOIN ──────────────────────────────────────────────────────────────
@@ -323,7 +395,6 @@ client.on(Events.GuildMemberAdd, async member => {
     }
 
     inviteCache.set(guild.id, new Map(fresh.map(i => [i.code, i.uses])));
-
     if (usedInvite?.inviter) trackInviter(guild.id, usedInvite.inviter.id);
   } catch (err) { console.error('Invite tracking:', err); }
 
@@ -361,7 +432,7 @@ client.on(Events.InteractionCreate, async interaction => {
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot) return;
 
-  // ── wizard replies ────────────────────────────────────────────────────────
+  // ── Wizard replies — no extra permission check inside an active wizard ────
   const wizard = wizards.get(message.author.id);
   if (wizard && message.channel.id === wizard.channelId) {
     const steps = wizard.type === 'welcome' ? WELCOME_STEPS : EVENT_STEPS;
@@ -386,8 +457,13 @@ client.on(Events.MessageCreate, async message => {
       } else {
         const eCh = message.guild.channels.cache.get(wizard.data.eventChannelId ?? settings.eventChannelId);
         if (!eCh) return message.channel.send('⚠️ Channel not found.');
-        await postEventComponents(eCh);
-        return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x57F287).setTitle('✅ Event posted!').setDescription(`Posted in <#${eCh.id}>`).setTimestamp()] });
+        try {
+          await postEventComponents(eCh);
+          return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x57F287).setTitle('✅ Event posted!').setDescription(`Posted in <#${eCh.id}>`).setTimestamp()] });
+        } catch (err) {
+          console.error('postEventComponents error:', err?.rawError ?? err);
+          return message.channel.send(`❌ Failed to post event: \`${err?.rawError?.message ?? err.message}\``);
+        }
       }
     }
 
@@ -418,13 +494,12 @@ client.on(Events.MessageCreate, async message => {
   const args = message.content.slice(CONFIG.PREFIX.length).trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
 
-  const hasPerm = () => message.member.permissions.has(PermissionsBitField.Flags.ManageGuild);
-  const noPerms = () => message.reply('❌ You need **Manage Server** permission.');
-  const isAdmin = () => message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+  // ── ALL commands now require Administrator flag OR the ADMIN_ROLE_ID role ──
+  if (!memberIsAdmin(message.member))
+    return message.reply('❌ You need **Administrator** permission' + (CONFIG.ADMIN_ROLE_ID ? ' or the admin role' : '') + '.');
 
   // ── !setwelcome ────────────────────────────────────────────────────────────
   if (cmd === 'setwelcome') {
-    if (!hasPerm()) return noPerms();
     if (wizards.has(message.author.id)) return message.reply('⚠️ You have an active wizard. Type `cancel` first.');
     wizards.set(message.author.id, { type: 'welcome', step: 0, data: {}, channelId: message.channel.id });
     return message.channel.send({ embeds: [
@@ -435,7 +510,6 @@ client.on(Events.MessageCreate, async message => {
 
   // ── !setevent ──────────────────────────────────────────────────────────────
   if (cmd === 'setevent') {
-    if (!hasPerm()) return noPerms();
     if (wizards.has(message.author.id)) return message.reply('⚠️ You have an active wizard. Type `cancel` first.');
     wizards.set(message.author.id, { type: 'event', step: 0, data: {}, channelId: message.channel.id });
     return message.channel.send({ embeds: [
@@ -444,10 +518,55 @@ client.on(Events.MessageCreate, async message => {
     ]});
   }
 
-  // ── !revoke <uses> <amount> ──────────────────────────────────────────────
-  if (cmd === 'revoke') {
-    if (!hasPerm()) return noPerms();
+  // ── !setlog #channel ──────────────────────────────────────────────────────
+  if (cmd === 'setlog') {
+    const chId = args[0]?.replace(/[<#>]/g, '').trim();
+    if (!chId) return message.reply('❌ Usage: `!setlog #channel` or `!setlog <channel-id>`');
+    const ch = message.guild.channels.cache.get(chId);
+    if (!ch) return message.reply('❌ Channel not found. Make sure you mention it or paste the ID.');
+    settings.logChannelId = chId;
+    return message.reply({ embeds: [
+      new EmbedBuilder()
+        .setColor(0x57F287)
+        .setTitle('✅ Log Channel Set')
+        .setDescription(
+          `Auto-revoke events and invite link creation/deletion logs will now be sent to <#${chId}>.\n\n` +
+          `Use \`!logs\` anytime to view the last 10 entries in this channel.`
+        )
+        .setTimestamp(),
+    ]});
+  }
 
+  // ── !logs — show recent log buffer ────────────────────────────────────────
+  if (cmd === 'logs') {
+    if (!logBuffer.length)
+      return message.reply('📋 No log entries recorded yet. Logs appear when invites are created/deleted or auto-revoke runs.');
+
+    const typeLabel = {
+      invite_created: '🔗 Invite Created',
+      invite_deleted: '🗑️ Invite Deleted',
+      auto_revoke:    '🧹 Auto-Revoke',
+    };
+
+    // Show last 10, newest first
+    const entries = [...logBuffer].reverse().slice(0, 10);
+    const fields  = entries.map(e => ({
+      name:  `${typeLabel[e.type] ?? e.type} — <t:${Math.floor(e.time / 1000)}:R>`,
+      value: e.description.slice(0, 1020),
+    }));
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle('📋 Recent Logs (last 10 of ' + logBuffer.length + ')')
+      .addFields(fields)
+      .setFooter({ text: `Log channel: ${settings.logChannelId ? `#${message.guild.channels.cache.get(settings.logChannelId)?.name ?? settings.logChannelId}` : 'not set — use !setlog #channel'}` })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
+  }
+
+  // ── !revoke <uses> <amount> ───────────────────────────────────────────────
+  if (cmd === 'revoke') {
     const maxUses = parseInt(args[0]);
     const amount  = parseInt(args[1]);
     if (isNaN(maxUses) || isNaN(amount) || amount < 1 || maxUses < 0)
@@ -463,13 +582,29 @@ client.on(Events.MessageCreate, async message => {
       const working = await message.reply(`⏳ Revoking **${targets.length}** invite(s)...`);
 
       let deleted = 0, failed = 0;
+      const revokedCodes = [];
       for (const inv of targets) {
         try {
           await inv.delete(`Bulk revoke by ${message.author.tag}`);
           inviteCache.get(message.guild.id)?.delete(inv.code);
+          revokedCodes.push(`\`${inv.code}\` — ${inv.uses} use${inv.uses === 1 ? '' : 's'}`);
           deleted++;
         } catch { failed++; }
       }
+
+      // Log the manual revoke to buffer and log channel
+      const revokeDesc =
+        `Manual revoke by **${message.author.tag}**\n` +
+        `Deleted **${deleted}** link(s) with ≤ **${maxUses}** uses:\n` +
+        revokedCodes.slice(0, 20).join('\n') +
+        (revokedCodes.length > 20 ? `\n…and ${revokedCodes.length - 20} more` : '');
+      addLog('auto_revoke', revokeDesc);
+      await sendLog(message.guild, new EmbedBuilder()
+        .setColor(0xFF4444)
+        .setTitle('🔒 Manual Bulk Revoke')
+        .setDescription(revokeDesc)
+        .setTimestamp()
+      );
 
       await working.delete().catch(() => {});
       return message.reply({ embeds: [
@@ -492,26 +627,23 @@ client.on(Events.MessageCreate, async message => {
     }
   }
 
-  // ── !invites — personal invite stats (or @mention) ──────────────────────
+  // ── !invites — personal invite stats (or @mention) ────────────────────────
   if (cmd === 'invites') {
     try {
-      const target    = message.mentions.users.first() ?? message.author;
+      const target     = message.mentions.users.first() ?? message.author;
       const guildStats = inviterStats.get(message.guild.id);
       const count      = guildStats?.get(target.id) ?? 0;
 
-      // also count from live invite data
       const allInvites = await message.guild.invites.fetch();
       const theirLinks = allInvites.filter(i => i.inviter?.id === target.id);
       const liveUses   = theirLinks.reduce((sum, i) => sum + i.uses, 0);
+      const total      = Math.max(count, liveUses);
 
-      const total = Math.max(count, liveUses);
-
-      // figure out which tier they're at
       const tiers = [
-        { req: 1,   label: 'Permanent Yeti',         emoji: '<:Yeti:1487166315729780836>',             robux: '2,500'  },
-        { req: 3,   label: 'Permanent Kitsune',       emoji: '<:KitsuneFruit:1487166342497960008>',     robux: '5,000'  },
-        { req: 6,   label: 'Permanent Dragon',        emoji: '<:dragon:1487166379122626723>',           robux: '7,500'  },
-        { req: 10,  label: 'All Permanent Fruits',    emoji: '<:perm:1487166401797029971>',             robux: '10,000' },
+        { req: 1,  label: 'Permanent Yeti',      emoji: '<:Yeti:1487166315729780836>',         robux: '2,500'  },
+        { req: 3,  label: 'Permanent Kitsune',    emoji: '<:KitsuneFruit:1487166342497960008>', robux: '5,000'  },
+        { req: 6,  label: 'Permanent Dragon',     emoji: '<:dragon:1487166379122626723>',       robux: '7,500'  },
+        { req: 10, label: 'All Permanent Fruits', emoji: '<:perm:1487166401797029971>',         robux: '10,000' },
       ];
 
       const earned  = tiers.filter(t => total >= t.req);
@@ -523,25 +655,22 @@ client.on(Events.MessageCreate, async message => {
         return '█'.repeat(filled) + '░'.repeat(len - filled);
       };
 
-      const nextText = next
+      const nextText   = next
         ? `\`${progressBar(total, next.req)}\` **${total}/${next.req}** — ${next.emoji} **${next.label}**`
         : '🏆 All tiers unlocked!';
-
       const rewardText = current
         ? `${current.emoji} **${current.label}** — **${current.robux} Robux**`
         : '*No reward yet — start inviting!*';
-
-      const activeLinks = theirLinks.size;
 
       const embed = new EmbedBuilder()
         .setColor(0xF9A81D)
         .setAuthor({ name: target.tag, iconURL: target.displayAvatarURL({ dynamic: true }) })
         .setTitle('📨 Invite Stats')
         .addFields(
-          { name: '👥 Total Invites',   value: `**${total}**`,       inline: true },
-          { name: '🔗 Active Links',    value: `**${activeLinks}**`, inline: true },
-          { name: '🏅 Current Reward',  value: rewardText,           inline: false },
-          { name: '⏭️ Next Reward',     value: nextText,             inline: false },
+          { name: '👥 Total Invites',  value: `**${total}**`,           inline: true },
+          { name: '🔗 Active Links',   value: `**${theirLinks.size}**`, inline: true },
+          { name: '🏅 Current Reward', value: rewardText,               inline: false },
+          { name: '⏭️ Next Reward',    value: nextText,                 inline: false },
         )
         .setFooter({ text: `${message.guild.name} • BloxFruit Event`, iconURL: message.guild.iconURL() })
         .setTimestamp();
@@ -558,27 +687,23 @@ client.on(Events.MessageCreate, async message => {
     try {
       const allInvites = await message.guild.invites.fetch();
 
-      // aggregate uses per inviter from live data
       const liveMap = new Map();
       for (const inv of allInvites.values()) {
         if (!inv.inviter) continue;
         liveMap.set(inv.inviter.id, (liveMap.get(inv.inviter.id) ?? 0) + inv.uses);
       }
 
-      // merge with in-memory stats
       const merged = new Map(liveMap);
       const gStats = inviterStats.get(message.guild.id);
       if (gStats) {
-        for (const [id, count] of gStats.entries()) {
-          merged.set(id, Math.max(merged.get(id) ?? 0, count));
-        }
+        for (const [id, c] of gStats.entries())
+          merged.set(id, Math.max(merged.get(id) ?? 0, c));
       }
 
       if (!merged.size)
         return message.reply('No invite data yet — nobody has joined via invite.');
 
       const sorted = [...merged.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-
       const medals = ['🥇', '🥈', '🥉'];
       const rows   = await Promise.all(sorted.map(async ([id, count], i) => {
         const user  = await client.users.fetch(id).catch(() => null);
@@ -589,34 +714,33 @@ client.on(Events.MessageCreate, async message => {
         return `${medal} **${name}**\n> \`${bar}\` **${count}** invite${count === 1 ? '' : 's'}`;
       }));
 
-      const embed = new EmbedBuilder()
-        .setColor(0xF9A81D)
-        .setTitle('🏆 Invite Leaderboard')
-        .setDescription(rows.join('\n\n'))
-        .setFooter({ text: `${message.guild.name} • top ${sorted.length} inviters`, iconURL: message.guild.iconURL() })
-        .setTimestamp();
-
-      return message.reply({ embeds: [embed] });
+      return message.reply({ embeds: [
+        new EmbedBuilder()
+          .setColor(0xF9A81D)
+          .setTitle('🏆 Invite Leaderboard')
+          .setDescription(rows.join('\n\n'))
+          .setFooter({ text: `${message.guild.name} • top ${sorted.length} inviters`, iconURL: message.guild.iconURL() })
+          .setTimestamp(),
+      ]});
     } catch (err) {
       console.error(err);
       return message.reply('❌ Could not build leaderboard.');
     }
   }
 
-  // ── !counts — total invite uses across the whole server ─────────────────
+  // ── !counts — total invite uses across the whole server ───────────────────
   if (cmd === 'counts') {
     try {
       const all        = await message.guild.invites.fetch();
       const totalUses  = all.reduce((sum, i) => sum + i.uses, 0);
       const totalLinks = all.size;
 
-      // breakdown by inviter
       const byInviter = new Map();
       for (const inv of all.values()) {
         if (!inv.inviter) continue;
         byInviter.set(inv.inviter.id, {
           tag:   inv.inviter.tag,
-          uses:  (byInviter.get(inv.inviter.id)?.uses ?? 0) + inv.uses,
+          uses:  (byInviter.get(inv.inviter.id)?.uses  ?? 0) + inv.uses,
           links: (byInviter.get(inv.inviter.id)?.links ?? 0) + 1,
         });
       }
@@ -630,61 +754,69 @@ client.on(Events.MessageCreate, async message => {
         })
         .join('\n');
 
-      const embed = new EmbedBuilder()
-        .setColor(0xF9A81D)
-        .setTitle('📊 Server Invite Count')
-        .addFields(
-          { name: '🔗 Total Active Links', value: `**${totalLinks}**`,           inline: true },
-          { name: '👥 Total Uses',         value: `**${totalUses}**`,            inline: true },
-          { name: '📈 Avg Uses per Link',  value: totalLinks > 0 ? `**${(totalUses / totalLinks).toFixed(1)}**` : '**0**', inline: true },
-          { name: '🏅 Top Inviters',       value: topInviters || '*no data yet*', inline: false },
-        )
-        .setFooter({ text: `${message.guild.name} • live data`, iconURL: message.guild.iconURL() })
-        .setTimestamp();
-
-      return message.reply({ embeds: [embed] });
+      return message.reply({ embeds: [
+        new EmbedBuilder()
+          .setColor(0xF9A81D)
+          .setTitle('📊 Server Invite Count')
+          .addFields(
+            { name: '🔗 Total Active Links', value: `**${totalLinks}**`,                                                              inline: true },
+            { name: '👥 Total Uses',         value: `**${totalUses}**`,                                                               inline: true },
+            { name: '📈 Avg Uses per Link',  value: totalLinks > 0 ? `**${(totalUses / totalLinks).toFixed(1)}**` : '**0**',         inline: true },
+            { name: '🏅 Top Inviters',       value: topInviters || '*no data yet*',                                                   inline: false },
+          )
+          .setFooter({ text: `${message.guild.name} • live data`, iconURL: message.guild.iconURL() })
+          .setTimestamp(),
+      ]});
     } catch (err) {
       console.error(err);
       return message.reply('❌ Could not fetch invite data.');
     }
   }
 
-
   // ── !help ──────────────────────────────────────────────────────────────────
   if (cmd === 'help') {
-    const isStaff = hasPerm();
-    const isAdminUser = isAdmin();
-
     const embed = new EmbedBuilder()
       .setColor(0xF9A81D)
       .setTitle('\u{1F34A} BloxFruit Bot \u2014 Commands')
-      .setDescription('All commands use the `!` prefix.')
+      .setDescription(
+        'All commands require **Administrator** permission' +
+        (CONFIG.ADMIN_ROLE_ID ? ' or the configured admin role' : '') +
+        '. Prefix: `!`'
+      )
       .addFields(
         {
           name: '\u{1F4E8} Invites',
-          value: '`!invites` \u2014 your personal invite stats + reward progress\n`!invites @user` \u2014 check someone else stats\n`!invitelb` \u2014 top 10 invite leaderboard\n`!counts` \u2014 total invite links & uses across the whole server',
+          value:
+            '`!invites` \u2014 your personal invite stats + reward progress\n' +
+            '`!invites @user` \u2014 check someone else\'s stats\n' +
+            '`!invitelb` \u2014 top 10 invite leaderboard\n' +
+            '`!counts` \u2014 total invite links & uses across the whole server',
         },
         {
           name: '\u{1F512} Moderation',
-          value: isStaff
-            ? '`!revoke <uses> <amount>` \u2014 bulk delete invites\nExample: `!revoke 3 100` deletes up to 100 invites with 3 or fewer uses'
-            : '*requires Manage Server*',
+          value: '`!revoke <uses> <amount>` \u2014 bulk delete invites\nExample: `!revoke 3 100` deletes up to 100 invites with 3 or fewer uses',
         },
         {
           name: '\u{1F6E0}\uFE0F Setup',
-          value: isStaff
-            ? '`!setwelcome` \u2014 set up the welcome embed\n`!setevent` \u2014 post the BloxFruit event embed'
-            : '*requires Manage Server*',
+          value:
+            '`!setwelcome` \u2014 set up the welcome embed\n' +
+            '`!setevent` \u2014 post the BloxFruit event embed\n' +
+            '`!setlog #channel` \u2014 set the channel for live auto-revoke & invite logs',
+        },
+        {
+          name: '\u{1F4CB} Logs',
+          value: '`!logs` \u2014 view the last 10 log entries (invite created/deleted + auto-revokes)',
         },
         {
           name: '\u{1F527} Utility',
-          value: isAdminUser
-            ? '`!test` \u2014 full health check on the bot'
-            : '*requires Administrator*',
+          value: '`!test` \u2014 full health check on the bot',
         },
         {
-          name: '\u2699\uFE0F Automatic',
-          value: `\u{1F44B} Welcome message on every join\n\u{1F9F9} Every **${CONFIG.SWEEP_LINK_THRESHOLD}** active invite links — removes **${CONFIG.SWEEP_AMOUNT}** links with fewer than **${CONFIG.SWEEP_MIN_USES}** uses`,
+          // ── CHANGED: was "⚙️ Automatic", now "⚙️ Auto-Revoke" ───────────
+          name: '\u2699\uFE0F Auto-Revoke',
+          value:
+            '\u{1F44B} Welcome message on every join\n' +
+            `\u{1F9F9} Every **${CONFIG.SWEEP_LINK_THRESHOLD}** active invite links \u2014 auto-removes **${CONFIG.SWEEP_AMOUNT}** links with fewer than **${CONFIG.SWEEP_MIN_USES}** uses`,
         },
       )
       .setFooter({ text: `${message.guild.name} \u2022 BloxFruit Event Bot`, iconURL: message.guild.iconURL() })
@@ -693,15 +825,14 @@ client.on(Events.MessageCreate, async message => {
     return message.reply({ embeds: [embed] });
   }
 
-  // ── !test — admin only ─────────────────────────────────────────────────────
+  // ── !test — health check ──────────────────────────────────────────────────
   if (cmd === 'test') {
-    if (!isAdmin()) return message.reply('❌ You need **Administrator** permission.');
-
-    const ping    = client.ws.ping;
-    const wCh     = message.guild.channels.cache.get(settings.welcomeChannelId);
-    const eCh     = message.guild.channels.cache.get(settings.eventChannelId);
-    const cached  = inviteCache.get(message.guild.id);
-    let canFetch  = false;
+    const ping   = client.ws.ping;
+    const wCh    = message.guild.channels.cache.get(settings.welcomeChannelId);
+    const eCh    = message.guild.channels.cache.get(settings.eventChannelId);
+    const lCh    = message.guild.channels.cache.get(settings.logChannelId);
+    const cached = inviteCache.get(message.guild.id);
+    let canFetch = false;
     try { await message.guild.invites.fetch(); canFetch = true; } catch {}
     let canSend = false;
     if (wCh) {
@@ -710,13 +841,15 @@ client.on(Events.MessageCreate, async message => {
     }
 
     const checks = [
-      { name: '🏓 Latency',            ok: ping < 500,   value: `${ping}ms` },
-      { name: '👋 Welcome Channel',    ok: !!wCh,        value: wCh ? `<#${wCh.id}>` : 'not set — run `!setwelcome`' },
-      { name: '🎁 Event Channel',      ok: !!eCh,        value: eCh ? `<#${eCh.id}>` : 'not set — run `!setevent`' },
-      { name: '📋 Invite Cache',       ok: !!cached,     value: cached ? `${cached.size} invite(s) cached` : 'empty — restart may help' },
-      { name: '🔑 Invite Permissions', ok: canFetch,     value: canFetch ? 'can read invites ✓' : 'missing Manage Guild' },
-      { name: '✉️ Can Send Welcome',   ok: canSend,      value: canSend ? 'send + embed ✓' : wCh ? 'missing perms in that channel' : 'channel not set' },
-      { name: '🧹 Auto-Sweep',         ok: true,         value: `every ${CONFIG.SWEEP_LINK_THRESHOLD} invite links · removes ${CONFIG.SWEEP_AMOUNT} links with <${CONFIG.SWEEP_MIN_USES} uses` },
+      { name: '🏓 Latency',            ok: ping < 500,                  value: `${ping}ms` },
+      { name: '👋 Welcome Channel',    ok: !!wCh,                       value: wCh ? `<#${wCh.id}>` : 'not set — run `!setwelcome`' },
+      { name: '🎁 Event Channel',      ok: !!eCh,                       value: eCh ? `<#${eCh.id}>` : 'not set — run `!setevent`' },
+      { name: '📋 Log Channel',        ok: !!lCh,                       value: lCh ? `<#${lCh.id}>` : 'not set — run `!setlog #channel`' },
+      { name: '📦 Invite Cache',       ok: !!cached,                    value: cached ? `${cached.size} invite(s) cached` : 'empty — restart may help' },
+      { name: '🔑 Invite Permissions', ok: canFetch,                    value: canFetch ? 'can read invites ✓' : 'missing Manage Guild' },
+      { name: '✉️ Can Send Welcome',   ok: canSend,                     value: canSend ? 'send + embed ✓' : wCh ? 'missing perms in that channel' : 'channel not set' },
+      { name: '🖼️ Event Banner',       ok: !!CONFIG.EVENT_BANNER_URL,   value: CONFIG.EVENT_BANNER_URL ? CONFIG.EVENT_BANNER_URL.slice(0, 60) + '…' : 'not set — banner skipped (set EVENT_BANNER_URL env var)' },
+      { name: '🧹 Auto-Revoke',        ok: true,                        value: `every ${CONFIG.SWEEP_LINK_THRESHOLD} links · removes ${CONFIG.SWEEP_AMOUNT} with <${CONFIG.SWEEP_MIN_USES} uses` },
     ];
 
     const allGood = checks.every(c => c.ok);
