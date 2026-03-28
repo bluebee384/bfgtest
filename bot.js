@@ -26,8 +26,9 @@ const CONFIG = {
   WELCOME_CHANNEL_ID: process.env.WELCOME_CHANNEL_ID,
   EVENT_CHANNEL_ID:   process.env.EVENT_CHANNEL_ID,
   PREFIX:             '!',
-  SWEEP_EVERY_JOINS:  1000,
-  SWEEP_MIN_USES:     3,
+  SWEEP_LINK_THRESHOLD: 1000, // sweep triggers when total active invite links hits this
+  SWEEP_AMOUNT:         100,  // how many dead links to remove per sweep
+  SWEEP_MIN_USES:       3,    // a link is "dead" if it has fewer than this many uses
 };
 
 if (!CONFIG.TOKEN) { console.error('❌ DISCORD_TOKEN missing.'); process.exit(1); }
@@ -44,8 +45,9 @@ const settings = {
 
 // ─── INVITE TRACKING ─────────────────────────────────────────────────────────
 const inviteCache  = new Map(); // guildId -> Map<code, uses>
-const joinCounter  = new Map(); // guildId -> total joins
 const inviterStats = new Map(); // guildId -> Map<userId, inviteCount>
+// Track last known invite count per guild to detect crossing the threshold
+const lastSweepAt  = new Map(); // guildId -> invite count at last sweep
 
 function trackInviter(guildId, userId) {
   if (!inviterStats.has(guildId)) inviterStats.set(guildId, new Map());
@@ -220,22 +222,28 @@ function wizardStatusEmbed(steps, currentStep, data, type) {
 }
 
 // ─── AUTO SWEEP ───────────────────────────────────────────────────────────────
+// Triggered when total active invite count hits SWEEP_LINK_THRESHOLD.
+// Removes up to SWEEP_AMOUNT links that have fewer than SWEEP_MIN_USES uses.
 async function sweepDeadInvites(guild) {
   try {
     const invites = await guild.invites.fetch();
-    const dead    = invites.filter(i => i.uses < CONFIG.SWEEP_MIN_USES);
-    if (!dead.size) return { swept: 0, codes: [] };
+    const dead    = [...invites.values()]
+      .filter(i => i.uses < CONFIG.SWEEP_MIN_USES)
+      .sort((a, b) => a.uses - b.uses)      // lowest uses first
+      .slice(0, CONFIG.SWEEP_AMOUNT);        // cap at SWEEP_AMOUNT
+
+    if (!dead.length) return { swept: 0, codes: [], total: invites.size };
 
     const codes = [];
-    for (const inv of dead.values()) {
+    for (const inv of dead) {
       await inv.delete(`Auto-sweep: <${CONFIG.SWEEP_MIN_USES} uses`);
       inviteCache.get(guild.id)?.delete(inv.code);
       codes.push(`\`${inv.code}\` — ${inv.uses} use${inv.uses === 1 ? '' : 's'}`);
     }
-    return { swept: codes.length, codes };
+    return { swept: codes.length, codes, total: invites.size };
   } catch (err) {
     console.error('Sweep error:', err);
-    return { swept: 0, codes: [] };
+    return { swept: 0, codes: [], total: 0 };
   }
 }
 
@@ -250,10 +258,51 @@ client.once(Events.ClientReady, async () => {
   }
 });
 
-client.on(Events.InviteCreate, inv => {
+client.on(Events.InviteCreate, async inv => {
   const c = inviteCache.get(inv.guild.id) ?? new Map();
   c.set(inv.code, inv.uses);
   inviteCache.set(inv.guild.id, c);
+
+  // ── Check if total link count just crossed a multiple of SWEEP_LINK_THRESHOLD ──
+  try {
+    const allInvites   = await inv.guild.invites.fetch();
+    const currentCount = allInvites.size;
+    const lastAt       = lastSweepAt.get(inv.guild.id) ?? 0;
+    const crossed      = Math.floor(currentCount / CONFIG.SWEEP_LINK_THRESHOLD);
+    const lastCrossed  = Math.floor(lastAt / CONFIG.SWEEP_LINK_THRESHOLD);
+
+    if (crossed > lastCrossed) {
+      lastSweepAt.set(inv.guild.id, currentCount);
+      console.log(`🧹 [${inv.guild.name}] Hit ${currentCount} invite links — triggering sweep...`);
+
+      const { swept, codes, total } = await sweepDeadInvites(inv.guild);
+      const logCh = inv.guild.channels.cache.get(settings.welcomeChannelId);
+      if (logCh) {
+        if (swept > 0) {
+          await logCh.send({ embeds: [
+            new EmbedBuilder()
+              .setColor(0xFF4444)
+              .setTitle('🧹 Auto-Sweep Complete')
+              .setDescription(
+                `Triggered at **${currentCount} active invite links**.\nRemoved **${swept}** link(s) with fewer than **${CONFIG.SWEEP_MIN_USES}** uses:\n\n` +
+                codes.join('\n')
+              )
+              .setTimestamp(),
+          ]});
+        } else {
+          await logCh.send({ embeds: [
+            new EmbedBuilder()
+              .setColor(0xFFA500)
+              .setTitle('🧹 Sweep Triggered — Nothing Removed')
+              .setDescription(`Hit **${currentCount} active links** but found no links with fewer than **${CONFIG.SWEEP_MIN_USES}** uses.`)
+              .setTimestamp(),
+          ]});
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Sweep check error:', err);
+  }
 });
 
 client.on(Events.InviteDelete, inv => {
@@ -276,24 +325,6 @@ client.on(Events.GuildMemberAdd, async member => {
     inviteCache.set(guild.id, new Map(fresh.map(i => [i.code, i.uses])));
 
     if (usedInvite?.inviter) trackInviter(guild.id, usedInvite.inviter.id);
-
-    // sweep check
-    const count = (joinCounter.get(guild.id) ?? 0) + 1;
-    joinCounter.set(guild.id, count);
-
-    if (count % CONFIG.SWEEP_EVERY_JOINS === 0) {
-      const { swept, codes } = await sweepDeadInvites(guild);
-      const logCh = guild.channels.cache.get(settings.welcomeChannelId);
-      if (logCh && swept > 0) {
-        await logCh.send({ embeds: [
-          new EmbedBuilder()
-            .setColor(0xFF4444)
-            .setTitle('🧹 Auto-Sweep')
-            .setDescription(`**${swept}** dead invite(s) removed after **${count} total joins**:\n\n${codes.join('\n')}`)
-            .setTimestamp(),
-        ]});
-      }
-    }
   } catch (err) { console.error('Invite tracking:', err); }
 
   const wCh = guild.channels.cache.get(settings.welcomeChannelId);
@@ -653,7 +684,7 @@ client.on(Events.MessageCreate, async message => {
         },
         {
           name: '\u2699\uFE0F Automatic',
-          value: `\u{1F44B} Welcome message on every join\n\u{1F9F9} Every **${CONFIG.SWEEP_EVERY_JOINS}** joins — removes invites with fewer than **${CONFIG.SWEEP_MIN_USES}** uses`,
+          value: `\u{1F44B} Welcome message on every join\n\u{1F9F9} Every **${CONFIG.SWEEP_LINK_THRESHOLD}** active invite links — removes **${CONFIG.SWEEP_AMOUNT}** links with fewer than **${CONFIG.SWEEP_MIN_USES}** uses`,
         },
       )
       .setFooter({ text: `${message.guild.name} \u2022 BloxFruit Event Bot`, iconURL: message.guild.iconURL() })
@@ -685,7 +716,7 @@ client.on(Events.MessageCreate, async message => {
       { name: '📋 Invite Cache',       ok: !!cached,     value: cached ? `${cached.size} invite(s) cached` : 'empty — restart may help' },
       { name: '🔑 Invite Permissions', ok: canFetch,     value: canFetch ? 'can read invites ✓' : 'missing Manage Guild' },
       { name: '✉️ Can Send Welcome',   ok: canSend,      value: canSend ? 'send + embed ✓' : wCh ? 'missing perms in that channel' : 'channel not set' },
-      { name: '🧹 Auto-Sweep',         ok: true,         value: `every ${CONFIG.SWEEP_EVERY_JOINS} joins · removes <${CONFIG.SWEEP_MIN_USES} uses` },
+      { name: '🧹 Auto-Sweep',         ok: true,         value: `every ${CONFIG.SWEEP_LINK_THRESHOLD} invite links · removes ${CONFIG.SWEEP_AMOUNT} links with <${CONFIG.SWEEP_MIN_USES} uses` },
     ];
 
     const allGood = checks.every(c => c.ok);
