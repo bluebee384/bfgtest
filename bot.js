@@ -22,15 +22,15 @@ const client = new Client({
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 const CONFIG = {
-  TOKEN:              process.env.DISCORD_TOKEN,
+  TOKEN: process.env.DISCORD_TOKEN,
   WELCOME_CHANNEL_ID: process.env.WELCOME_CHANNEL_ID,
-  EVENT_CHANNEL_ID:   process.env.EVENT_CHANNEL_ID,
-  EVENT_BANNER_URL:   process.env.EVENT_BANNER_URL ?? null,
-  ADMIN_ROLE_ID:      process.env.ADMIN_ROLE_ID ?? null,
-  PREFIX:             '!',
+  EVENT_CHANNEL_ID: process.env.EVENT_CHANNEL_ID,
+  EVENT_BANNER_URL: process.env.EVENT_BANNER_URL ?? null,
+  ADMIN_ROLE_ID: process.env.ADMIN_ROLE_ID ?? null,
+  PREFIX: '!',
   SWEEP_LINK_THRESHOLD: 1000,
-  SWEEP_AMOUNT:         100,
-  SWEEP_MIN_USES:       3,
+  SWEEP_AMOUNT: 100,
+  SWEEP_MIN_USES: 3,
 };
 
 if (!CONFIG.TOKEN) { console.error('❌ DISCORD_TOKEN missing.'); process.exit(1); }
@@ -38,18 +38,18 @@ if (!CONFIG.TOKEN) { console.error('❌ DISCORD_TOKEN missing.'); process.exit(1
 // ─── RUNTIME SETTINGS ────────────────────────────────────────────────────────
 const settings = {
   welcomeChannelId: CONFIG.WELCOME_CHANNEL_ID,
-  rulesChannelId:   null,
+  rulesChannelId: null,
   generalChannelId: null,
-  welcomeColor:     0xFFD700,
-  welcomeBanner:    null,
-  eventChannelId:   CONFIG.EVENT_CHANNEL_ID,
-  logChannelId:     null,
+  welcomeColor: 0xFFD700,
+  welcomeBanner: null,
+  eventChannelId: CONFIG.EVENT_CHANNEL_ID,
+  logChannelId: null,
 };
 
 // ─── INVITE TRACKING ─────────────────────────────────────────────────────────
-const inviteCache  = new Map();
+const inviteCache = new Map();
 const inviterStats = new Map();
-const lastSweepAt  = new Map();
+const lastSweepAt = new Map();
 
 function trackInviter(guildId, userId) {
   if (!inviterStats.has(guildId)) inviterStats.set(guildId, new Map());
@@ -59,6 +59,7 @@ function trackInviter(guildId, userId) {
 
 // ─── LOG BUFFER ───────────────────────────────────────────────────────────────
 const logBuffer = [];
+
 function addLog(type, description) {
   logBuffer.push({ time: Date.now(), type, description });
   if (logBuffer.length > 50) logBuffer.shift();
@@ -127,18 +128,17 @@ function buildWelcomeEmbed(member, data, guild) {
       `🎮 Then dive in — events, giveaways and more are waiting!`
     )
     .addFields(
-      { name: '📌 Rules',   value: data.rulesChannelId   ? `<#${data.rulesChannelId}>`   : '*not set*', inline: true },
-      { name: '🎁 Events',  value: data.eventChannelId   ? `<#${data.eventChannelId}>`   : '*not set*', inline: true },
+      { name: '📌 Rules', value: data.rulesChannelId ? `<#${data.rulesChannelId}>` : '*not set*', inline: true },
+      { name: '🎁 Events', value: data.eventChannelId ? `<#${data.eventChannelId}>` : '*not set*', inline: true },
       { name: '💬 General', value: data.generalChannelId ? `<#${data.generalChannelId}>` : '*not set*', inline: true },
     )
     .setFooter({ text: `${guild.name} • good to have you 🍊`, iconURL: guild.iconURL() })
     .setTimestamp();
-
   if (data.welcomeBanner) embed.setImage(data.welcomeBanner);
   return embed;
 }
 
-// ─── EVENT — COMPONENTS  ────────────────────────────────────────────────────
+// ─── EVENT — COMPONENTS ────────────────────────────────────────────────────
 async function postEventComponents(channel) {
   const innerComponents = [
     {
@@ -146,14 +146,12 @@ async function postEventComponents(channel) {
       content: '<:buddha:1487034693651267664> Summer BloxFruit Event — Event Rewards',
     },
   ];
-
   if (CONFIG.EVENT_BANNER_URL) {
     innerComponents.push({
       type: 12,
       items: [{ media: { url: CONFIG.EVENT_BANNER_URL } }],
     });
   }
-
   innerComponents.push(
     { type: 14, divider: true, spacing: 1 },
     {
@@ -223,8 +221,8 @@ function wizardStatusEmbed(steps, currentStep, data, type) {
     .setDescription(`Step **${currentStep + 1}** of **${steps.length}** — type \`cancel\` anytime to exit.`)
     .addFields(
       steps.filter(s => s.key !== '_preview').map(s => ({
-        name:   s.label,
-        value:  data[s.key] != null
+        name: s.label,
+        value: data[s.key] != null
                   ? (typeof data[s.key] === 'number' ? `#${data[s.key].toString(16).toUpperCase()}` : String(data[s.key]).slice(0, 80))
                   : (s.optional ? '*skipped*' : '⏳ pending'),
         inline: true,
@@ -237,13 +235,11 @@ function wizardStatusEmbed(steps, currentStep, data, type) {
 async function sweepDeadInvites(guild) {
   try {
     const invites = await guild.invites.fetch();
-    const dead    = [...invites.values()]
+    const dead = [...invites.values()]
       .filter(i => i.uses < CONFIG.SWEEP_MIN_USES)
       .sort((a, b) => a.uses - b.uses)
       .slice(0, CONFIG.SWEEP_AMOUNT);
-
     if (!dead.length) return { swept: 0, codes: [], total: invites.size };
-
     const codes = [];
     for (const inv of dead) {
       await inv.delete(`Auto-revoke: <${CONFIG.SWEEP_MIN_USES} uses`);
@@ -274,7 +270,6 @@ client.on(Events.InviteCreate, async inv => {
   c.set(inv.code, inv.uses);
   inviteCache.set(inv.guild.id, c);
 
-  // Fetch total invite count for the guild
   let totalLinks = '?';
   try {
     const all = await inv.guild.invites.fetch();
@@ -293,17 +288,14 @@ client.on(Events.InviteCreate, async inv => {
   // ── Auto-revoke threshold check ───────────────────────────────────────────
   try {
     const currentCount = typeof totalLinks === 'number' ? totalLinks : 0;
-    const lastAt       = lastSweepAt.get(inv.guild.id) ?? 0;
-    const crossed      = Math.floor(currentCount / CONFIG.SWEEP_LINK_THRESHOLD);
-    const lastCrossed  = Math.floor(lastAt / CONFIG.SWEEP_LINK_THRESHOLD);
-
+    const lastAt = lastSweepAt.get(inv.guild.id) ?? 0;
+    const crossed = Math.floor(currentCount / CONFIG.SWEEP_LINK_THRESHOLD);
+    const lastCrossed = Math.floor(lastAt / CONFIG.SWEEP_LINK_THRESHOLD);
     if (crossed > lastCrossed) {
       lastSweepAt.set(inv.guild.id, currentCount);
       console.log(`🧹 [${inv.guild.name}] Hit ${currentCount} invite links — triggering auto-revoke...`);
-
       const { swept, codes } = await sweepDeadInvites(inv.guild);
       const logCh = inv.guild.channels.cache.get(settings.welcomeChannelId);
-
       if (swept > 0) {
         const sweepDesc =
           `Triggered at **${currentCount} active invite links**.\n` +
@@ -338,57 +330,74 @@ client.on(Events.InviteCreate, async inv => {
 // ─── INVITE DELETED ───────────────────────────────────────────────────────────
 client.on(Events.InviteDelete, async inv => {
   inviteCache.get(inv.guild.id)?.delete(inv.code);
-
   let totalLinks = '?';
   try {
     const all = await inv.guild.invites.fetch();
     totalLinks = all.size;
   } catch {}
-
   const logMsg =
     `🗑️ **Invite deleted**\n` +
     `Code: \`${inv.code}\`\n` +
     `Channel: ${inv.channel ? `<#${inv.channel.id}>` : 'Unknown'}\n` +
     `Total invites: **${totalLinks}**`;
-
   addLog('invite_deleted', logMsg);
   await sendLog(inv.guild, logMsg);
 });
 
-// ─── MEMBER JOIN ──────────────────────────────────────────────────────────────
+// ─── MEMBER JOIN — Apollo-style Welcome (Short + Auto Delete) ────────────────
 client.on(Events.GuildMemberAdd, async member => {
   const guild = member.guild;
+  const wCh = guild.channels.cache.get(settings.welcomeChannelId);
+  if (!wCh) return;
+
   let usedInvite = null;
-
   try {
-    const fresh    = await guild.invites.fetch();
+    const fresh = await guild.invites.fetch();
     const oldCache = inviteCache.get(guild.id) ?? new Map();
-
     for (const inv of fresh.values()) {
       if (inv.uses > (oldCache.get(inv.code) ?? 0)) { usedInvite = inv; break; }
     }
-
     inviteCache.set(guild.id, new Map(fresh.map(i => [i.code, i.uses])));
     if (usedInvite?.inviter) trackInviter(guild.id, usedInvite.inviter.id);
   } catch (err) { console.error('Invite tracking:', err); }
-
-  const wCh = guild.channels.cache.get(settings.welcomeChannelId);
-  if (!wCh) return;
 
   const inviterLine = usedInvite?.inviter
     ? `> invited by **${usedInvite.inviter.tag}** · code \`${usedInvite.code}\` · ${usedInvite.uses} uses`
     : '> invite source unknown';
 
-  const embed = buildWelcomeEmbed(member, settings, guild);
-  embed.setDescription(embed.data.description + `\n\n${inviterLine}`);
-  embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }));
+  const embed = new EmbedBuilder()
+    .setColor(settings.welcomeColor ?? 0xFFD700)
+    .setTitle(`👋 Welcome to ${guild.name}!`)
+    .setDescription(
+      `Hey ${member}, glad you joined! 🎉\n\n` +
+      `You're member **#${guild.memberCount}**`
+    )
+    .addFields(
+      { name: '📜 Rules', value: settings.rulesChannelId ? `<#${settings.rulesChannelId}>` : '*not set*', inline: true },
+      { name: '🎮 Events', value: settings.eventChannelId ? `<#${settings.eventChannelId}>` : '*not set*', inline: true },
+      { name: '💬 General', value: settings.generalChannelId ? `<#${settings.generalChannelId}>` : '*not set*', inline: true },
+    )
+    .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
+    .setFooter({ text: `${guild.name} • good to have you 🍊`, iconURL: guild.iconURL() })
+    .setTimestamp();
+
+  if (settings.welcomeBanner) embed.setImage(settings.welcomeBanner);
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setLabel('📜 Read Rules').setStyle(ButtonStyle.Primary).setCustomId('rules_btn'),
     new ButtonBuilder().setLabel('🎮 Active Events').setStyle(ButtonStyle.Success).setCustomId('events_btn'),
   );
 
-  await wCh.send({ content: `👋 Welcome ${member}!`, embeds: [embed], components: [row] });
+  const welcomeMsg = await wCh.send({
+    content: `👋 Welcome ${member}!`,
+    embeds: [embed],
+    components: [row]
+  });
+
+  // ── Auto Delete after 4 seconds (Apollo-style clean channel) ──
+  setTimeout(() => {
+    welcomeMsg.delete().catch(() => {});
+  }, 4000);
 });
 
 // ─── BUTTONS ──────────────────────────────────────────────────────────────────
@@ -409,22 +418,18 @@ client.on(Events.MessageCreate, async message => {
   const wizard = wizards.get(message.author.id);
   if (wizard && message.channel.id === wizard.channelId) {
     const steps = wizard.type === 'welcome' ? WELCOME_STEPS : EVENT_STEPS;
-    const step  = steps[wizard.step];
-
+    const step = steps[wizard.step];
     if (message.content.trim().toLowerCase() === 'cancel') {
       wizards.delete(message.author.id);
       return message.channel.send({ embeds: [new EmbedBuilder().setColor(0xFF4444).setTitle('❌ Cancelled').setDescription('Nothing was saved.').setTimestamp()] });
     }
-
     if (step.isConfirm) {
       if (step.parse(message.content) !== 'confirm') {
         wizards.delete(message.author.id);
         return message.channel.send({ embeds: [new EmbedBuilder().setColor(0xFF4444).setTitle('❌ Cancelled').setDescription('Nothing was saved.').setTimestamp()] });
       }
-
       Object.assign(settings, wizard.data);
       wizards.delete(message.author.id);
-
       if (wizard.type === 'welcome') {
         return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x57F287).setTitle('✅ Welcome settings saved!').setTimestamp()] });
       } else {
@@ -439,23 +444,19 @@ client.on(Events.MessageCreate, async message => {
         }
       }
     }
-
     const parsed = step.parse(message.content);
     if (!parsed && !step.optional)
       return message.channel.send(`⚠️ Invalid input for **${step.label}**, try again.`);
     if (parsed !== null) wizard.data[step.key] = parsed;
     wizard.step++;
-
     const next = steps[wizard.step];
     if (!next) { wizards.delete(message.author.id); return; }
-
     if (next.isConfirm) {
       const embeds = [new EmbedBuilder().setColor(0x5865F2).setDescription(next.prompt)];
       if (wizard.type === 'welcome') embeds.push(buildWelcomeEmbed(null, { ...settings, ...wizard.data }, message.guild));
       embeds.push(wizardStatusEmbed(steps, wizard.step, { ...settings, ...wizard.data }, wizard.type === 'welcome' ? 'Welcome' : 'Event'));
       return message.channel.send({ embeds });
     }
-
     return message.channel.send({ embeds: [
       new EmbedBuilder().setColor(0x5865F2).setDescription(next.prompt),
       wizardStatusEmbed(steps, wizard.step, { ...settings, ...wizard.data }, wizard.type === 'welcome' ? 'Welcome' : 'Event'),
@@ -463,9 +464,8 @@ client.on(Events.MessageCreate, async message => {
   }
 
   if (!message.content.startsWith(CONFIG.PREFIX)) return;
-
   const args = message.content.slice(CONFIG.PREFIX.length).trim().split(/\s+/);
-  const cmd  = args.shift().toLowerCase();
+  const cmd = args.shift().toLowerCase();
 
   if (!memberIsAdmin(message.member))
     return message.reply('❌ You need **Administrator** permission' + (CONFIG.ADMIN_ROLE_ID ? ' or the admin role' : '') + '.');
@@ -513,45 +513,37 @@ client.on(Events.MessageCreate, async message => {
   if (cmd === 'logs') {
     if (!logBuffer.length)
       return message.reply('📋 No log entries recorded yet. Logs appear when invites are created/deleted or auto-revoke runs.');
-
     const typeLabel = {
       invite_created: '📨 Invite Created',
       invite_deleted: '🗑️ Invite Deleted',
-      auto_revoke:    '🧹 Auto-Revoke',
+      auto_revoke: '🧹 Auto-Revoke',
     };
-
     const entries = [...logBuffer].reverse().slice(0, 10);
-    const fields  = entries.map(e => ({
-      name:  `${typeLabel[e.type] ?? e.type} — <t:${Math.floor(e.time / 1000)}:R>`,
+    const fields = entries.map(e => ({
+      name: `${typeLabel[e.type] ?? e.type} — <t:${Math.floor(e.time / 1000)}:R>`,
       value: e.description.slice(0, 1020),
     }));
-
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
       .setTitle('📋 Recent Logs (last 10 of ' + logBuffer.length + ')')
       .addFields(fields)
       .setFooter({ text: `Log channel: ${settings.logChannelId ? `#${message.guild.channels.cache.get(settings.logChannelId)?.name ?? settings.logChannelId}` : 'not set — use !setlog #channel'}` })
       .setTimestamp();
-
     return message.reply({ embeds: [embed] });
   }
 
   // ── !revoke <uses> <amount> ───────────────────────────────────────────────
   if (cmd === 'revoke') {
     const maxUses = parseInt(args[0]);
-    const amount  = parseInt(args[1]);
+    const amount = parseInt(args[1]);
     if (isNaN(maxUses) || isNaN(amount) || amount < 1 || maxUses < 0)
       return message.reply('❌ Usage: `!revoke <uses> <amount>`\nExample: `!revoke 3 100` — deletes up to 100 invites with 3 or fewer uses.');
-
     try {
-      const all     = await message.guild.invites.fetch();
+      const all = await message.guild.invites.fetch();
       const targets = [...all.values()].filter(i => i.uses <= maxUses).slice(0, amount);
-
       if (!targets.length)
         return message.reply(`❌ No invites found with **${maxUses}** or fewer uses.`);
-
       const working = await message.reply(`⏳ Revoking **${targets.length}** invite(s)...`);
-
       let deleted = 0, failed = 0;
       const revokedCodes = [];
       for (const inv of targets) {
@@ -562,7 +554,6 @@ client.on(Events.MessageCreate, async message => {
           deleted++;
         } catch { failed++; }
       }
-
       const revokeDesc =
         `Manual revoke by **${message.author.tag}**\n` +
         `Deleted **${deleted}** link(s) with ≤ **${maxUses}** uses:\n` +
@@ -575,19 +566,18 @@ client.on(Events.MessageCreate, async message => {
         .setDescription(revokeDesc)
         .setTimestamp()
       );
-
       await working.delete().catch(() => {});
       return message.reply({ embeds: [
         new EmbedBuilder()
           .setColor(deleted > 0 ? 0xFF4444 : 0xFFA500)
           .setTitle('🔒 Bulk Revoke Done')
           .addFields(
-            { name: 'Requested', value: `${amount}`,         inline: true },
-            { name: 'Matched',   value: `${targets.length}`, inline: true },
-            { name: 'Deleted',   value: `${deleted}`,        inline: true },
-            { name: 'Max Uses',  value: `≤ ${maxUses}`,      inline: true },
-            { name: 'Failed',    value: `${failed}`,         inline: true },
-            { name: 'By',        value: message.author.tag,  inline: true },
+            { name: 'Requested', value: `${amount}`, inline: true },
+            { name: 'Matched', value: `${targets.length}`, inline: true },
+            { name: 'Deleted', value: `${deleted}`, inline: true },
+            { name: 'Max Uses', value: `≤ ${maxUses}`, inline: true },
+            { name: 'Failed', value: `${failed}`, inline: true },
+            { name: 'By', value: message.author.tag, inline: true },
           )
           .setTimestamp(),
       ]});
@@ -600,51 +590,44 @@ client.on(Events.MessageCreate, async message => {
   // ── !invites ──────────────────────────────────────────────────────────────
   if (cmd === 'invites') {
     try {
-      const target     = message.mentions.users.first() ?? message.author;
+      const target = message.mentions.users.first() ?? message.author;
       const guildStats = inviterStats.get(message.guild.id);
-      const count      = guildStats?.get(target.id) ?? 0;
-
+      const count = guildStats?.get(target.id) ?? 0;
       const allInvites = await message.guild.invites.fetch();
       const theirLinks = allInvites.filter(i => i.inviter?.id === target.id);
-      const liveUses   = theirLinks.reduce((sum, i) => sum + i.uses, 0);
-      const total      = Math.max(count, liveUses);
-
+      const liveUses = theirLinks.reduce((sum, i) => sum + i.uses, 0);
+      const total = Math.max(count, liveUses);
       const tiers = [
-        { req: 1,  label: 'Permanent Yeti',      emoji: '<:Yeti:1487166315729780836>',         robux: '2,500'  },
-        { req: 3,  label: 'Permanent Kitsune',    emoji: '<:KitsuneFruit:1487166342497960008>', robux: '5,000'  },
-        { req: 6,  label: 'Permanent Dragon',     emoji: '<:dragon:1487166379122626723>',       robux: '7,500'  },
-        { req: 10, label: 'All Permanent Fruits', emoji: '<:perm:1487166401797029971>',         robux: '10,000' },
+        { req: 1, label: 'Permanent Yeti', emoji: '<:Yeti:1487166315729780836>', robux: '2,500' },
+        { req: 3, label: 'Permanent Kitsune', emoji: '<:KitsuneFruit:1487166342497960008>', robux: '5,000' },
+        { req: 6, label: 'Permanent Dragon', emoji: '<:dragon:1487166379122626723>', robux: '7,500' },
+        { req: 10, label: 'All Permanent Fruits', emoji: '<:perm:1487166401797029971>', robux: '10,000' },
       ];
-
-      const earned  = tiers.filter(t => total >= t.req);
+      const earned = tiers.filter(t => total >= t.req);
       const current = earned[earned.length - 1] ?? null;
-      const next    = tiers.find(t => total < t.req) ?? null;
-
+      const next = tiers.find(t => total < t.req) ?? null;
       const progressBar = (val, max, len = 10) => {
         const filled = Math.min(Math.round((val / max) * len), len);
         return '█'.repeat(filled) + '░'.repeat(len - filled);
       };
-
-      const nextText   = next
+      const nextText = next
         ? `\`${progressBar(total, next.req)}\` **${total}/${next.req}** — ${next.emoji} **${next.label}**`
         : '🏆 All tiers unlocked!';
       const rewardText = current
         ? `${current.emoji} **${current.label}** — **${current.robux} Robux**`
         : '*No reward yet — start inviting!*';
-
       const embed = new EmbedBuilder()
         .setColor(0xF9A81D)
         .setAuthor({ name: target.tag, iconURL: target.displayAvatarURL({ dynamic: true }) })
         .setTitle('📨 Invite Stats')
         .addFields(
-          { name: '👥 Total Invites',  value: `**${total}**`,           inline: true },
-          { name: '🔗 Active Links',   value: `**${theirLinks.size}**`, inline: true },
-          { name: '🏅 Current Reward', value: rewardText,               inline: false },
-          { name: '⏭️ Next Reward',    value: nextText,                 inline: false },
+          { name: '👥 Total Invites', value: `**${total}**`, inline: true },
+          { name: '🔗 Active Links', value: `**${theirLinks.size}**`, inline: true },
+          { name: '🏅 Current Reward', value: rewardText, inline: false },
+          { name: '⏭️ Next Reward', value: nextText, inline: false },
         )
         .setFooter({ text: `${message.guild.name} • BloxFruit Event`, iconURL: message.guild.iconURL() })
         .setTimestamp();
-
       return message.reply({ embeds: [embed] });
     } catch (err) {
       console.error(err);
@@ -656,34 +639,29 @@ client.on(Events.MessageCreate, async message => {
   if (cmd === 'invitelb') {
     try {
       const allInvites = await message.guild.invites.fetch();
-
       const liveMap = new Map();
       for (const inv of allInvites.values()) {
         if (!inv.inviter) continue;
         liveMap.set(inv.inviter.id, (liveMap.get(inv.inviter.id) ?? 0) + inv.uses);
       }
-
       const merged = new Map(liveMap);
       const gStats = inviterStats.get(message.guild.id);
       if (gStats) {
         for (const [id, c] of gStats.entries())
           merged.set(id, Math.max(merged.get(id) ?? 0, c));
       }
-
       if (!merged.size)
         return message.reply('No invite data yet — nobody has joined via invite.');
-
       const sorted = [...merged.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
       const medals = ['🥇', '🥈', '🥉'];
-      const rows   = await Promise.all(sorted.map(async ([id, count], i) => {
-        const user  = await client.users.fetch(id).catch(() => null);
-        const name  = user ? user.tag : `Unknown (${id})`;
+      const rows = await Promise.all(sorted.map(async ([id, count], i) => {
+        const user = await client.users.fetch(id).catch(() => null);
+        const name = user ? user.tag : `Unknown (${id})`;
         const medal = medals[i] ?? `**${i + 1}.**`;
-        const bar   = '█'.repeat(Math.min(Math.round((count / sorted[0][1]) * 8), 8)) +
+        const bar = '█'.repeat(Math.min(Math.round((count / sorted[0][1]) * 8), 8)) +
                       '░'.repeat(8 - Math.min(Math.round((count / sorted[0][1]) * 8), 8));
         return `${medal} **${name}**\n> \`${bar}\` **${count}** invite${count === 1 ? '' : 's'}`;
       }));
-
       return message.reply({ embeds: [
         new EmbedBuilder()
           .setColor(0xF9A81D)
@@ -701,20 +679,18 @@ client.on(Events.MessageCreate, async message => {
   // ── !counts ───────────────────────────────────────────────────────────────
   if (cmd === 'counts') {
     try {
-      const all        = await message.guild.invites.fetch();
-      const totalUses  = all.reduce((sum, i) => sum + i.uses, 0);
+      const all = await message.guild.invites.fetch();
+      const totalUses = all.reduce((sum, i) => sum + i.uses, 0);
       const totalLinks = all.size;
-
       const byInviter = new Map();
       for (const inv of all.values()) {
         if (!inv.inviter) continue;
         byInviter.set(inv.inviter.id, {
-          tag:   inv.inviter.tag,
-          uses:  (byInviter.get(inv.inviter.id)?.uses  ?? 0) + inv.uses,
+          tag: inv.inviter.tag,
+          uses: (byInviter.get(inv.inviter.id)?.uses ?? 0) + inv.uses,
           links: (byInviter.get(inv.inviter.id)?.links ?? 0) + 1,
         });
       }
-
       const topInviters = [...byInviter.values()]
         .sort((a, b) => b.uses - a.uses)
         .slice(0, 5)
@@ -723,16 +699,15 @@ client.on(Events.MessageCreate, async message => {
           return `${medals[i] ?? `**${i+1}.**`} **${v.tag}** — **${v.uses}** uses across **${v.links}** link${v.links === 1 ? '' : 's'}`;
         })
         .join('\n');
-
       return message.reply({ embeds: [
         new EmbedBuilder()
           .setColor(0xF9A81D)
           .setTitle('📊 Server Invite Count')
           .addFields(
-            { name: '🔗 Total Active Links', value: `**${totalLinks}**`,                                                              inline: true },
-            { name: '👥 Total Uses',         value: `**${totalUses}**`,                                                               inline: true },
-            { name: '📈 Avg Uses per Link',  value: totalLinks > 0 ? `**${(totalUses / totalLinks).toFixed(1)}**` : '**0**',         inline: true },
-            { name: '🏅 Top Inviters',       value: topInviters || '*no data yet*',                                                   inline: false },
+            { name: '🔗 Total Active Links', value: `**${totalLinks}**`, inline: true },
+            { name: '👥 Total Uses', value: `**${totalUses}**`, inline: true },
+            { name: '📈 Avg Uses per Link', value: totalLinks > 0 ? `**${(totalUses / totalLinks).toFixed(1)}**` : '**0**', inline: true },
+            { name: '🏅 Top Inviters', value: topInviters || '*no data yet*', inline: false },
           )
           .setFooter({ text: `${message.guild.name} • live data`, iconURL: message.guild.iconURL() })
           .setTimestamp(),
@@ -788,16 +763,15 @@ client.on(Events.MessageCreate, async message => {
       )
       .setFooter({ text: `${message.guild.name} \u2022 BloxFruit Event Bot`, iconURL: message.guild.iconURL() })
       .setTimestamp();
-
     return message.reply({ embeds: [embed] });
   }
 
   // ── !test ─────────────────────────────────────────────────────────────────
   if (cmd === 'test') {
-    const ping   = client.ws.ping;
-    const wCh    = message.guild.channels.cache.get(settings.welcomeChannelId);
-    const eCh    = message.guild.channels.cache.get(settings.eventChannelId);
-    const lCh    = message.guild.channels.cache.get(settings.logChannelId);
+    const ping = client.ws.ping;
+    const wCh = message.guild.channels.cache.get(settings.welcomeChannelId);
+    const eCh = message.guild.channels.cache.get(settings.eventChannelId);
+    const lCh = message.guild.channels.cache.get(settings.logChannelId);
     const cached = inviteCache.get(message.guild.id);
     let canFetch = false;
     try { await message.guild.invites.fetch(); canFetch = true; } catch {}
@@ -806,19 +780,17 @@ client.on(Events.MessageCreate, async message => {
       const p = wCh.permissionsFor(message.guild.members.me);
       canSend = p?.has('SendMessages') && p?.has('EmbedLinks');
     }
-
     const checks = [
-      { name: '🏓 Latency',            ok: ping < 500,                  value: `${ping}ms` },
-      { name: '👋 Welcome Channel',    ok: !!wCh,                       value: wCh ? `<#${wCh.id}>` : 'not set — run `!setwelcome`' },
-      { name: '🎁 Event Channel',      ok: !!eCh,                       value: eCh ? `<#${eCh.id}>` : 'not set — run `!setevent`' },
-      { name: '📋 Log Channel',        ok: !!lCh,                       value: lCh ? `<#${lCh.id}>` : 'not set — run `!setlog #channel`' },
-      { name: '📦 Invite Cache',       ok: !!cached,                    value: cached ? `${cached.size} invite(s) cached` : 'empty — restart may help' },
-      { name: '🔑 Invite Permissions', ok: canFetch,                    value: canFetch ? 'can read invites ✓' : 'missing Manage Guild' },
-      { name: '✉️ Can Send Welcome',   ok: canSend,                     value: canSend ? 'send + embed ✓' : wCh ? 'missing perms in that channel' : 'channel not set' },
-      { name: '🖼️ Event Banner',       ok: !!CONFIG.EVENT_BANNER_URL,   value: CONFIG.EVENT_BANNER_URL ? CONFIG.EVENT_BANNER_URL.slice(0, 60) + '…' : 'not set — banner skipped (set EVENT_BANNER_URL env var)' },
-      { name: '🧹 Auto-Revoke',        ok: true,                        value: `every ${CONFIG.SWEEP_LINK_THRESHOLD} links · removes ${CONFIG.SWEEP_AMOUNT} with <${CONFIG.SWEEP_MIN_USES} uses` },
+      { name: '🏓 Latency', ok: ping < 500, value: `${ping}ms` },
+      { name: '👋 Welcome Channel', ok: !!wCh, value: wCh ? `<#${wCh.id}>` : 'not set — run `!setwelcome`' },
+      { name: '🎁 Event Channel', ok: !!eCh, value: eCh ? `<#${eCh.id}>` : 'not set — run `!setevent`' },
+      { name: '📋 Log Channel', ok: !!lCh, value: lCh ? `<#${lCh.id}>` : 'not set — run `!setlog #channel`' },
+      { name: '📦 Invite Cache', ok: !!cached, value: cached ? `${cached.size} invite(s) cached` : 'empty — restart may help' },
+      { name: '🔑 Invite Permissions', ok: canFetch, value: canFetch ? 'can read invites ✓' : 'missing Manage Guild' },
+      { name: '✉️ Can Send Welcome', ok: canSend, value: canSend ? 'send + embed ✓' : wCh ? 'missing perms in that channel' : 'channel not set' },
+      { name: '🖼️ Event Banner', ok: !!CONFIG.EVENT_BANNER_URL, value: CONFIG.EVENT_BANNER_URL ? CONFIG.EVENT_BANNER_URL.slice(0, 60) + '…' : 'not set — banner skipped (set EVENT_BANNER_URL env var)' },
+      { name: '🧹 Auto-Revoke', ok: true, value: `every ${CONFIG.SWEEP_LINK_THRESHOLD} links · removes ${CONFIG.SWEEP_AMOUNT} with <${CONFIG.SWEEP_MIN_USES} uses` },
     ];
-
     const allGood = checks.every(c => c.ok);
     return message.reply({ embeds: [
       new EmbedBuilder()
