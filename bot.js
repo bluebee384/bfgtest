@@ -5,7 +5,7 @@ const {
 } = require('discord.js');
 const http = require('http');
 
-// ─── RAILWAY KEEP-ALIVE ──────────────────────────────────────────────────────
+// RAILWAY KEEP-ALIVE
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => { res.writeHead(200); res.end('Bot is alive ✅'); })
   .listen(PORT, () => console.log(`🌐 Keep-alive on port ${PORT}`));
@@ -20,7 +20,7 @@ const client = new Client({
   ],
 });
 
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
+// CONFIG
 const CONFIG = {
   TOKEN: process.env.DISCORD_TOKEN,
   WELCOME_CHANNEL_ID: process.env.WELCOME_CHANNEL_ID,
@@ -35,17 +35,17 @@ const CONFIG = {
 
 if (!CONFIG.TOKEN) { console.error('❌ DISCORD_TOKEN missing.'); process.exit(1); }
 
-// ─── RUNTIME SETTINGS ────────────────────────────────────────────────────────
+// RUNTIME SETTINGS
 const settings = {
   welcomeChannelId: CONFIG.WELCOME_CHANNEL_ID,
-  welcomeMessage: "Welcome",   // Default message
+  welcomeMessage: "Welcome",
   rulesChannelId: null,
   generalChannelId: null,
   eventChannelId: CONFIG.EVENT_CHANNEL_ID,
   logChannelId: null,
 };
 
-// ─── INVITE TRACKING ─────────────────────────────────────────────────────────
+// INVITE TRACKING
 const inviteCache = new Map();
 const inviterStats = new Map();
 const lastSweepAt = new Map();
@@ -56,7 +56,7 @@ function trackInviter(guildId, userId) {
   m.set(userId, (m.get(userId) ?? 0) + 1);
 }
 
-// ─── LOG BUFFER ───────────────────────────────────────────────────────────────
+// LOG BUFFER
 const logBuffer = [];
 
 function addLog(type, description) {
@@ -64,7 +64,7 @@ function addLog(type, description) {
   if (logBuffer.length > 50) logBuffer.shift();
 }
 
-// ─── SEND TO LOG CHANNEL ─────────────────────────────────────────────────────
+// SEND TO LOG CHANNEL
 async function sendLog(guild, content) {
   if (!settings.logChannelId) return;
   const ch = guild.channels.cache.get(settings.logChannelId);
@@ -76,17 +76,17 @@ async function sendLog(guild, content) {
   }
 }
 
-// ─── PERMISSION CHECK ─────────────────────────────────────────────────────────
+// PERMISSION CHECK
 function memberIsAdmin(member) {
   if (member.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
   if (CONFIG.ADMIN_ROLE_ID && member.roles.cache.has(CONFIG.ADMIN_ROLE_ID)) return true;
   return false;
 }
 
-// ─── WIZARD STATE ────────────────────────────────────────────────────────────
+// WIZARD STATE
 const wizards = new Map();
 
-// ── Welcome Wizard (Channel + Custom Message) ───────────────────────────────
+// WELCOME WIZARD
 const WELCOME_STEPS = [
   {
     key: 'welcomeChannelId',
@@ -123,13 +123,38 @@ const EVENT_STEPS = [
   },
 ];
 
-// ─── EVENT COMPONENTS (keep your original function here) ─────────────────────
+// EVENT COMPONENTS
 async function postEventComponents(channel) {
-  // Paste your full original postEventComponents code here
-  // (the one with Summer BloxFruit Event)
+  const innerComponents = [
+    { type: 10, content: '<:buddha:1487034693651267664> Summer BloxFruit Event — Event Rewards' },
+  ];
+  if (CONFIG.EVENT_BANNER_URL) {
+    innerComponents.push({ type: 12, items: [{ media: { url: CONFIG.EVENT_BANNER_URL } }] });
+  }
+  innerComponents.push(
+    { type: 14, divider: true, spacing: 1 },
+    { type: 10, content: "<a:announce:1487055874521567272> To celebrate the games activity, we've launched an OFFICIAL EVENT where you can earn FREE Permanent fruits & Robux!\n<a:flowignsand:1487055896243736658> This is a `limited-time` event and comes to an end <t:1774852200:R> ( <t:1774852200:f> ), so be sure to not miss this opportunity! <a:RobuxANIM:1487057805528666285>" },
+    { type: 14, divider: true, spacing: 2 },
+    { type: 10, content: '<:1442164148908851220:1487058441800519680> __ EVENT REWARDS:__ <:1442164148908851220:1487058441800519680>\n> <:e_fc7201_0280:1487162459805716581> <@&1487126325536886914> <:e_fc7201_8100:1487165177009934346> Permanent Yeti <:Yeti:1487166315729780836> / 2,500 Robux <:e_fc7201_3444:1487166961212330205>\n> <:e_f5e50c_6532:1487162569901736037> <@&1487126326749040893> <:e_f5e50c_7750:1487165218298663014> Permanent Kitsune <:KitsuneFruit:1487166342497960008> / 5,000 Robux <:e_f5e50c_8142:1487167022658879520>\n> <:e_f8a047_1847:1487164857517342750> <@&1487126328279830710> <:e_f8a047_8717:1487165262863274045> Permanent Dragon <:dragon:1487166379122626723>/ 7,500 Robux <:e_f8a047_8533:1487167066057474069>\n> <:e_faec69_9471:1487164889213567097> <@&1487126329294983294> <:e_faec69_2107:1487165319389778223> All Permanent Fruits <:perm:1487166401797029971> / 10,000 Robux <:e_faec69_1777:1487167121661104199>' },
+    { type: 14 },
+    { type: 10, content: '<:e_FFAE00_4916:1487105142997127250> EVENT GUIDELINES: <:e_FFAE00_4916:1487105142997127250>\n<:buddha:1487034693651267664> <:wh:1487105260387307580> Inviting alternative accounts to the event is strictly prohibited. <:e_FFAE00_8931:1487105621080801461>\n<:buddha:1487034693651267664> <:wh:1487105260387307580> Failure to follow Discord\'s Terms of Service and Roblox Community Guidelines may result in removal from the event.\n\n<:e_FFAE00_4914:1487106191690698875> CLAIM INFORMATION: <:e_FFAE00_4914:1487106191690698875>\n<:e_FFAE00_2239:1487106767551856640> Once you\'re completed your invites, contact an <@&1479764099607953532> to redeem! <:e_FFAE00_3461:1487107024318894233>' },
+    { type: 14 },
+    {
+      type: 1,
+      components: [
+        { type: 2, style: 5, label: 'Check Invite', url: 'https://discohook.app', emoji: { name: '👋' } },
+        { type: 2, style: 2, custom_id: 'p_284704454815518723', label: 'How to invite?', emoji: { name: '❔' } },
+      ],
+    },
+  );
+
+  await channel.send({
+    flags: 32768,
+    components: [{ type: 17, accent_color: 16351749, spoiler: false, components: innerComponents }],
+  });
 }
 
-// ─── WIZARD STATUS EMBED ──────────────────────────────────────────────────────
+// WIZARD STATUS EMBED
 function wizardStatusEmbed(steps, currentStep, data, type) {
   return new EmbedBuilder()
     .setColor(0x5865F2)
@@ -145,12 +170,29 @@ function wizardStatusEmbed(steps, currentStep, data, type) {
     .setFooter({ text: 'respond in this channel to continue' });
 }
 
-// ─── AUTO-REVOKE SWEEP (keep your original) ──────────────────────────────────
+// AUTO-REVOKE SWEEP
 async function sweepDeadInvites(guild) {
-  // Paste your original sweepDeadInvites function here
+  try {
+    const invites = await guild.invites.fetch();
+    const dead = [...invites.values()]
+      .filter(i => i.uses < CONFIG.SWEEP_MIN_USES)
+      .sort((a, b) => a.uses - b.uses)
+      .slice(0, CONFIG.SWEEP_AMOUNT);
+    if (!dead.length) return { swept: 0, codes: [], total: invites.size };
+    const codes = [];
+    for (const inv of dead) {
+      await inv.delete(`Auto-revoke: <${CONFIG.SWEEP_MIN_USES} uses`);
+      inviteCache.get(guild.id)?.delete(inv.code);
+      codes.push(`\`${inv.code}\` — ${inv.uses} use${inv.uses === 1 ? '' : 's'}`);
+    }
+    return { swept: codes.length, codes, total: invites.size };
+  } catch (err) {
+    console.error('Sweep error:', err);
+    return { swept: 0, codes: [], total: 0 };
+  }
 }
 
-// ─── READY EVENT ─────────────────────────────────────────────────────────────
+// READY
 client.once(Events.ClientReady, async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   for (const guild of client.guilds.cache.values()) {
@@ -161,10 +203,7 @@ client.once(Events.ClientReady, async () => {
   }
 });
 
-// ─── INVITE CREATE / DELETE (keep all your original code here) ───────────────
-// Paste your InviteCreate, InviteDelete, and sweep logic
-
-// ─── MEMBER JOIN — Simple Welcome ───────────────────────────────────────────
+// MEMBER JOIN
 client.on(Events.GuildMemberAdd, async member => {
   const guild = member.guild;
   const wCh = guild.channels.cache.get(settings.welcomeChannelId);
@@ -186,11 +225,10 @@ client.on(Events.GuildMemberAdd, async member => {
 
   const welcomeMsg = await wCh.send(welcomeText);
 
-  // Auto delete after 4 seconds
   setTimeout(() => welcomeMsg.delete().catch(() => {}), 4000);
 });
 
-// ─── BUTTONS (unchanged) ─────────────────────────────────────────────────────
+// BUTTONS
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isButton()) return;
   if (interaction.customId === 'rules_btn')
@@ -201,11 +239,11 @@ client.on(Events.InteractionCreate, async interaction => {
     return interaction.reply({ content: '📖 **How to invite:**\n1. Server Settings → Invites\n2. Create a link\n3. Share it\n4. Hit your goal, then contact staff to claim!', ephemeral: true });
 });
 
-// ─── MESSAGE CREATE — Fixed Order ────────────────────────────────────────────
+// MESSAGE CREATE
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot) return;
 
-  // 1. Wizard handling first (only if active)
+  // Wizard handling
   const wizard = wizards.get(message.author.id);
   if (wizard && message.channel.id === wizard.channelId) {
     const steps = wizard.type === 'welcome' ? WELCOME_STEPS : EVENT_STEPS;
@@ -242,7 +280,7 @@ client.on(Events.MessageCreate, async message => {
     ]});
   }
 
-  // 2. Normal prefix commands (now reachable)
+  // Normal prefix commands
   if (!message.content.startsWith(CONFIG.PREFIX)) return;
 
   const args = message.content.slice(CONFIG.PREFIX.length).trim().split(/\s+/);
@@ -251,19 +289,9 @@ client.on(Events.MessageCreate, async message => {
   if (!memberIsAdmin(message.member))
     return message.reply('❌ You need **Administrator** permission' + (CONFIG.ADMIN_ROLE_ID ? ' or the admin role' : '') + '.');
 
-  // ── !setwelcome ────────────────────────────────────────────────────────────
   if (cmd === 'setwelcome') {
     if (wizards.has(message.author.id)) return message.reply('⚠️ You have an active wizard. Type `cancel` first.');
     wizards.set(message.author.id, { type: 'welcome', step: 0, data: {}, channelId: message.channel.id });
     return message.channel.send({ embeds: [
       new EmbedBuilder().setColor(0x5865F2).setTitle('🛠️ Welcome Setup').setDescription(WELCOME_STEPS[0].prompt),
-      wizardStatusEmbed(WELCOME_STEPS, 0, settings, 'Welcome')
-    ]});
-  }
-
-  // Paste all your other commands here (!setevent, !setlog, !logs, !revoke, !invites, !invitelb, !counts, !help, !test)
-  // They will now work again.
-
-});
-
-client.login(CONFIG.TOKEN);
+      wizardStatusEmbed(WEL
