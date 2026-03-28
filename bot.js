@@ -38,7 +38,7 @@ if (!CONFIG.TOKEN) { console.error('❌ DISCORD_TOKEN missing.'); process.exit(1
 // ─── RUNTIME SETTINGS ────────────────────────────────────────────────────────
 const settings = {
   welcomeChannelId: CONFIG.WELCOME_CHANNEL_ID,
-  welcomeMessage:   null, // custom welcome message text
+  welcomeMessage:   null,
   rulesChannelId:   null,
   generalChannelId: null,
   welcomeColor:     0xFFD700,
@@ -87,7 +87,6 @@ function memberIsAdmin(member) {
 // ─── WIZARD STATE ────────────────────────────────────────────────────────────
 const wizards = new Map();
 
-// ── Welcome wizard: 3 steps — channel, message, confirm ─────────────────────
 const WELCOME_STEPS = [
   {
     key: 'welcomeChannelId', label: 'Welcome Channel',
@@ -100,7 +99,7 @@ const WELCOME_STEPS = [
     key: 'welcomeMessage', label: 'Welcome Message',
     prompt:
       '✏️ **Step 2/3 — Welcome Message**\n' +
-      'Type the custom text to include in the welcome embed.\n' +
+      'Type the custom text to include in the welcome message.\n' +
       'You can use `{user}` to mention the new member and `{server}` for the server name.\n' +
       'Type `skip` to use the default message.',
     parse: v => v.toLowerCase() === 'skip' ? null : v.trim(),
@@ -128,38 +127,30 @@ const EVENT_STEPS = [
   },
 ];
 
-// ─── WELCOME EMBED BUILDER ────────────────────────────────────────────────────
-function buildWelcomeEmbed(member, data, guild) {
-  // Resolve custom message — replace placeholders if member is real
+// ─── WELCOME MESSAGE BUILDER (plain text, Apollo-style) ───────────────────────
+function buildWelcomeText(member, data, guild, inviterLine) {
   const defaultMsg =
-    `📜 **Start by reading the rules** so you know what's what.\n` +
-    `🎮 Then dive in — events, giveaways and more are waiting!`;
+    `📜 Start by reading the rules, then dive into events & giveaways!`;
 
   let customText = data.welcomeMessage ?? defaultMsg;
-  if (member) {
-    customText = customText
-      .replace(/\{user\}/gi, member.toString())
-      .replace(/\{server\}/gi, guild.name);
-  }
+  customText = customText
+    .replace(/\{user\}/gi, member.toString())
+    .replace(/\{server\}/gi, guild.name);
 
-  const embed = new EmbedBuilder()
-    .setColor(data.welcomeColor ?? 0xFFD700)
-    .setTitle(`🌟 Welcome to ${guild.name}!`)
-    .setDescription(
-      `Hey ${member ?? '**New Member**'}, glad you joined! 🎉\n\n` +
-      `You're member **#${guild.memberCount}**\n\n` +
-      customText
-    )
-    .addFields(
-      { name: '📌 Rules',   value: data.rulesChannelId   ? `<#${data.rulesChannelId}>`   : '*not set*', inline: true },
-      { name: '🎁 Events',  value: data.eventChannelId   ? `<#${data.eventChannelId}>`   : '*not set*', inline: true },
-      { name: '💬 General', value: data.generalChannelId ? `<#${data.generalChannelId}>` : '*not set*', inline: true },
-    )
-    .setFooter({ text: `${guild.name} • good to have you 🍊`, iconURL: guild.iconURL() })
-    .setTimestamp();
+  const lines = [
+    `👋 Welcome to **${guild.name}**, ${member}! 🎉`,
+    ``,
+    `> You're member **#${guild.memberCount}**`,
+    data.rulesChannelId   ? `> 📌 Rules: <#${data.rulesChannelId}>`     : null,
+    data.eventChannelId   ? `> 🎁 Events: <#${data.eventChannelId}>`    : null,
+    data.generalChannelId ? `> 💬 Chat: <#${data.generalChannelId}>`    : null,
+    ``,
+    customText,
+    ``,
+    inviterLine ?? null,
+  ].filter(l => l !== null);
 
-  if (data.welcomeBanner) embed.setImage(data.welcomeBanner);
-  return embed;
+  return lines.join('\n');
 }
 
 // ─── EVENT — COMPONENTS ──────────────────────────────────────────────────────
@@ -382,20 +373,12 @@ client.on(Events.GuildMemberAdd, async member => {
   if (!wCh) return;
 
   const inviterLine = usedInvite?.inviter
-    ? `> invited by **${usedInvite.inviter.tag}** · code \`${usedInvite.code}\` · ${usedInvite.uses} uses`
-    : '> invite source unknown';
+    ? `*invited by **${usedInvite.inviter.tag}** · code \`${usedInvite.code}\` · ${usedInvite.uses} uses*`
+    : null;
 
-  const embed = buildWelcomeEmbed(member, settings, guild);
-  embed.setDescription(embed.data.description + `\n\n${inviterLine}`);
-  embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }));
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setLabel('📜 Read Rules').setStyle(ButtonStyle.Primary).setCustomId('rules_btn'),
-    new ButtonBuilder().setLabel('🎮 Active Events').setStyle(ButtonStyle.Success).setCustomId('events_btn'),
-  );
-
-  // ── Send welcome message then auto-delete after 3 seconds ────────────────
-  const sent = await wCh.send({ content: `👋 Welcome ${member}!`, embeds: [embed], components: [row] });
+  // ── Plain-text Apollo-style welcome, auto-deletes after 3 seconds ─────────
+  const content = buildWelcomeText(member, settings, guild, inviterLine);
+  const sent = await wCh.send({ content });
   setTimeout(() => sent.delete().catch(() => {}), 3000);
 });
 
@@ -459,7 +442,6 @@ client.on(Events.MessageCreate, async message => {
 
     if (next.isConfirm) {
       const embeds = [new EmbedBuilder().setColor(0x5865F2).setDescription(next.prompt)];
-      if (wizard.type === 'welcome') embeds.push(buildWelcomeEmbed(null, { ...settings, ...wizard.data }, message.guild));
       embeds.push(wizardStatusEmbed(steps, wizard.step, { ...settings, ...wizard.data }, wizard.type === 'welcome' ? 'Welcome' : 'Event'));
       return message.channel.send({ embeds });
     }
