@@ -86,7 +86,7 @@ function memberIsAdmin(member) {
 // ─── WIZARD STATE ────────────────────────────────────────────────────────────
 const wizards = new Map();
 
-// ── Welcome wizard: 2 steps only — channel + confirm ─────────────────────────
+// ── Welcome wizard: — channel + confirm ─────────────────────────
 const WELCOME_STEPS = [
   {
     key: 'welcomeChannelId', label: 'Welcome Channel',
