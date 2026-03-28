@@ -413,14 +413,14 @@ client.on(Events.MessageCreate, async message => {
     ]});
   }
 
-  // ── !revoke <amount> <maxUses> ─────────────────────────────────────────────
+  // ── !revoke <uses> <amount> ──────────────────────────────────────────────
   if (cmd === 'revoke') {
     if (!hasPerm()) return noPerms();
 
-    const amount  = parseInt(args[0]);
-    const maxUses = parseInt(args[1]);
-    if (isNaN(amount) || isNaN(maxUses) || amount < 1 || maxUses < 0)
-      return message.reply('❌ Usage: `!revoke <amount> <max_uses>`\nExample: `!revoke 100 3`');
+    const maxUses = parseInt(args[0]);
+    const amount  = parseInt(args[1]);
+    if (isNaN(maxUses) || isNaN(amount) || amount < 1 || maxUses < 0)
+      return message.reply('❌ Usage: `!revoke <uses> <amount>`\nExample: `!revoke 3 100` — deletes up to 100 invites with 3 or fewer uses.');
 
     try {
       const all     = await message.guild.invites.fetch();
@@ -461,8 +461,8 @@ client.on(Events.MessageCreate, async message => {
     }
   }
 
-  // ── !invite — personal invite stats ───────────────────────────────────────
-  if (cmd === 'invite') {
+  // ── !invites — personal invite stats (or @mention) ──────────────────────
+  if (cmd === 'invites') {
     try {
       const target    = message.mentions.users.first() ?? message.author;
       const guildStats = inviterStats.get(message.guild.id);
@@ -572,34 +572,94 @@ client.on(Events.MessageCreate, async message => {
     }
   }
 
-  // ── !invites — staff list of all active invites ────────────────────────────
-  if (cmd === 'invites') {
-    if (!hasPerm()) return noPerms();
+  // ── !counts — total invite uses across the whole server ─────────────────
+  if (cmd === 'counts') {
     try {
-      const all = await message.guild.invites.fetch();
-      if (!all.size) return message.reply('No active invites found.');
+      const all        = await message.guild.invites.fetch();
+      const totalUses  = all.reduce((sum, i) => sum + i.uses, 0);
+      const totalLinks = all.size;
 
-      const sorted = [...all.values()].sort((a, b) => b.uses - a.uses).slice(0, 10);
-      const top    = sorted[0].uses || 1;
+      // breakdown by inviter
+      const byInviter = new Map();
+      for (const inv of all.values()) {
+        if (!inv.inviter) continue;
+        byInviter.set(inv.inviter.id, {
+          tag:   inv.inviter.tag,
+          uses:  (byInviter.get(inv.inviter.id)?.uses ?? 0) + inv.uses,
+          links: (byInviter.get(inv.inviter.id)?.links ?? 0) + 1,
+        });
+      }
 
-      const rows = sorted.map((inv, i) => {
-        const bar     = '█'.repeat(Math.min(Math.round((inv.uses / top) * 8), 8)) + '░'.repeat(8 - Math.min(Math.round((inv.uses / top) * 8), 8));
-        const created = inv.createdAt ? `<t:${Math.floor(inv.createdAt / 1000)}:R>` : 'unknown';
-        const expires = inv.expiresAt ? `<t:${Math.floor(inv.expiresAt / 1000)}:R>` : 'never';
-        return `**${i + 1}.** \`${inv.code}\` · by **${inv.inviter?.tag ?? 'Unknown'}**\n> \`${bar}\` **${inv.uses}** uses · created ${created} · expires ${expires}`;
-      });
+      const topInviters = [...byInviter.values()]
+        .sort((a, b) => b.uses - a.uses)
+        .slice(0, 5)
+        .map((v, i) => {
+          const medals = ['🥇','🥈','🥉'];
+          return `${medals[i] ?? `**${i+1}.**`} **${v.tag}** — **${v.uses}** uses across **${v.links}** link${v.links === 1 ? '' : 's'}`;
+        })
+        .join('\n');
 
-      return message.reply({ embeds: [
-        new EmbedBuilder()
-          .setColor(0x5865F2)
-          .setTitle('📋 Active Invites')
-          .setDescription(rows.join('\n\n'))
-          .setFooter({ text: `${all.size} total active invite(s)` })
-          .setTimestamp(),
-      ]});
-    } catch {
-      return message.reply('❌ Could not fetch invites.');
+      const embed = new EmbedBuilder()
+        .setColor(0xF9A81D)
+        .setTitle('📊 Server Invite Count')
+        .addFields(
+          { name: '🔗 Total Active Links', value: `**${totalLinks}**`,           inline: true },
+          { name: '👥 Total Uses',         value: `**${totalUses}**`,            inline: true },
+          { name: '📈 Avg Uses per Link',  value: totalLinks > 0 ? `**${(totalUses / totalLinks).toFixed(1)}**` : '**0**', inline: true },
+          { name: '🏅 Top Inviters',       value: topInviters || '*no data yet*', inline: false },
+        )
+        .setFooter({ text: `${message.guild.name} • live data`, iconURL: message.guild.iconURL() })
+        .setTimestamp();
+
+      return message.reply({ embeds: [embed] });
+    } catch (err) {
+      console.error(err);
+      return message.reply('❌ Could not fetch invite data.');
     }
+  }
+
+
+  // ── !help ──────────────────────────────────────────────────────────────────
+  if (cmd === 'help') {
+    const isStaff = hasPerm();
+    const isAdminUser = isAdmin();
+
+    const embed = new EmbedBuilder()
+      .setColor(0xF9A81D)
+      .setTitle('\u{1F34A} BloxFruit Bot \u2014 Commands')
+      .setDescription('All commands use the `!` prefix.')
+      .addFields(
+        {
+          name: '\u{1F4E8} Invites',
+          value: '`!invites` \u2014 your personal invite stats + reward progress\n`!invites @user` \u2014 check someone else stats\n`!invitelb` \u2014 top 10 invite leaderboard\n`!counts` \u2014 total invite links & uses across the whole server',
+        },
+        {
+          name: '\u{1F512} Moderation',
+          value: isStaff
+            ? '`!revoke <uses> <amount>` \u2014 bulk delete invites\nExample: `!revoke 3 100` deletes up to 100 invites with 3 or fewer uses'
+            : '*requires Manage Server*',
+        },
+        {
+          name: '\u{1F6E0}\uFE0F Setup',
+          value: isStaff
+            ? '`!setwelcome` \u2014 set up the welcome embed\n`!setevent` \u2014 post the BloxFruit event embed'
+            : '*requires Manage Server*',
+        },
+        {
+          name: '\u{1F527} Utility',
+          value: isAdminUser
+            ? '`!test` \u2014 full health check on the bot'
+            : '*requires Administrator*',
+        },
+        {
+          name: '\u2699\uFE0F Automatic',
+          value: `\u{1F44B} Welcome message on every join\n\u{1F9F9} Every **${CONFIG.SWEEP_EVERY_JOINS}** joins — removes invites with fewer than **${CONFIG.SWEEP_MIN_USES}** uses`,
+        },
+      )
+      .setFooter({ text: `${message.guild.name} \u2022 BloxFruit Event Bot`, iconURL: message.guild.iconURL() })
+      .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
   }
 
   // ── !test — admin only ─────────────────────────────────────────────────────
