@@ -816,7 +816,7 @@ client.on(Events.MessageCreate, async message => {
           name: '\u2699\uFE0F Auto-Revoke',
           value:
             '\u{1F44B} Welcome message on every join\n' +
-            `\u{1F9F9} `, Autorevokes/n'
+            `\u{1F9F9} Every **${CONFIG.SWEEP_LINK_THRESHOLD}** active invite links \u2014 auto-removes **${CONFIG.SWEEP_AMOUNT}** links with fewer than **${CONFIG.SWEEP_MIN_USES}** uses`,
         },
       )
       .setFooter({ text: `${message.guild.name} \u2022 BloxFruit Event Bot`, iconURL: message.guild.iconURL() })
