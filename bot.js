@@ -65,10 +65,15 @@ function addLog(type, description) {
 }
 
 // ─── SEND TO LOG CHANNEL ─────────────────────────────────────────────────────
-async function sendLog(guild, embed) {
+async function sendLog(guild, content) {
   if (!settings.logChannelId) return;
   const ch = guild.channels.cache.get(settings.logChannelId);
-  if (ch) await ch.send({ embeds: [embed] }).catch(console.error);
+  if (!ch) return;
+  if (typeof content === 'string') {
+    await ch.send(content).catch(console.error);
+  } else {
+    await ch.send({ embeds: [content] }).catch(console.error);
+  }
 }
 
 // ─── PERMISSION CHECK ─────────────────────────────────────────────────────────
@@ -81,39 +86,16 @@ function memberIsAdmin(member) {
 // ─── WIZARD STATE ────────────────────────────────────────────────────────────
 const wizards = new Map();
 
+// ── Welcome wizard: 2 steps only — channel + confirm ─────────────────────────
 const WELCOME_STEPS = [
   {
     key: 'welcomeChannelId', label: 'Welcome Channel',
-    prompt: '📌 **Step 1/6 — Welcome Channel**\nMention or paste the channel ID where join messages appear.',
+    prompt: '📌 **Step 1/2 — Welcome Channel**\nMention or paste the channel ID where join messages should appear.',
     parse: v => v.replace(/[<#>]/g, '').trim(),
   },
   {
-    key: 'rulesChannelId', label: 'Rules Channel',
-    prompt: '📜 **Step 2/6 — Rules Channel**\nMention or paste your rules channel.',
-    parse: v => v.replace(/[<#>]/g, '').trim(),
-  },
-  {
-    key: 'generalChannelId', label: 'General Channel',
-    prompt: '💬 **Step 3/6 — General Channel**\nMention or paste your general chat channel.',
-    parse: v => v.replace(/[<#>]/g, '').trim(),
-  },
-  {
-    key: 'welcomeColor', label: 'Embed Color', optional: true,
-    prompt: '🎨 **Step 4/6 — Embed Color**\nHex color e.g. `#FFD700`. Type `skip` to keep current.',
-    parse: v => {
-      if (v.toLowerCase() === 'skip') return null;
-      const n = parseInt(v.replace('#', ''), 16);
-      return isNaN(n) ? null : n;
-    },
-  },
-  {
-    key: 'welcomeBanner', label: 'Banner URL', optional: true,
-    prompt: '🖼️ **Step 5/6 — Banner Image**\nPaste a direct image URL. Type `skip` to leave blank.',
-    parse: v => v.toLowerCase() === 'skip' ? null : v.trim(),
-  },
-  {
-    key: '_preview', label: 'Preview',
-    prompt: '👀 **Step 6/6 — Preview**\nLooking good? Reply `confirm` to save or `cancel` to discard.',
+    key: '_preview', label: 'Confirm',
+    prompt: '👀 **Step 2/2 — Confirm**\nReply `confirm` to save or `cancel` to discard.',
     parse: v => v.trim().toLowerCase(),
     isConfirm: true,
   },
@@ -292,23 +274,25 @@ client.on(Events.InviteCreate, async inv => {
   c.set(inv.code, inv.uses);
   inviteCache.set(inv.guild.id, c);
 
-  const createDesc =
-    `**Code:** \`${inv.code}\`\n` +
-    `**Created by:** ${inv.inviter?.tag ?? 'Unknown'} (${inv.inviter?.id ?? '?'})\n` +
-    `**Channel:** ${inv.channel ? `<#${inv.channel.id}>` : 'Unknown'}\n` +
-    `**Max uses:** ${inv.maxUses === 0 ? '∞' : inv.maxUses}\n` +
-    `**Expires:** ${inv.maxAge === 0 ? 'Never' : `<t:${Math.floor(Date.now() / 1000) + inv.maxAge}:R>`}`;
-  addLog('invite_created', createDesc);
-  await sendLog(inv.guild, new EmbedBuilder()
-    .setColor(0x57F287)
-    .setTitle('🔗 Invite Link Created')
-    .setDescription(createDesc)
-    .setTimestamp()
-  );
-
+  // Fetch total invite count for the guild
+  let totalLinks = '?';
   try {
-    const allInvites   = await inv.guild.invites.fetch();
-    const currentCount = allInvites.size;
+    const all = await inv.guild.invites.fetch();
+    totalLinks = all.size;
+  } catch {}
+
+  const logMsg =
+    `📨 **New invite created**\n` +
+    `Code: \`${inv.code}\`\n` +
+    `Creator: ${inv.inviter ? `<@${inv.inviter.id}>` : 'Unknown'}\n` +
+    `Total invites: **${totalLinks}**`;
+
+  addLog('invite_created', logMsg);
+  await sendLog(inv.guild, logMsg);
+
+  // ── Auto-revoke threshold check ───────────────────────────────────────────
+  try {
+    const currentCount = typeof totalLinks === 'number' ? totalLinks : 0;
     const lastAt       = lastSweepAt.get(inv.guild.id) ?? 0;
     const crossed      = Math.floor(currentCount / CONFIG.SWEEP_LINK_THRESHOLD);
     const lastCrossed  = Math.floor(lastAt / CONFIG.SWEEP_LINK_THRESHOLD);
@@ -355,16 +339,20 @@ client.on(Events.InviteCreate, async inv => {
 client.on(Events.InviteDelete, async inv => {
   inviteCache.get(inv.guild.id)?.delete(inv.code);
 
-  const deleteDesc =
-    `**Code:** \`${inv.code}\`\n` +
-    `**Channel:** ${inv.channel ? `<#${inv.channel.id}>` : 'Unknown'}`;
-  addLog('invite_deleted', deleteDesc);
-  await sendLog(inv.guild, new EmbedBuilder()
-    .setColor(0xFF4444)
-    .setTitle('🗑️ Invite Link Deleted')
-    .setDescription(deleteDesc)
-    .setTimestamp()
-  );
+  let totalLinks = '?';
+  try {
+    const all = await inv.guild.invites.fetch();
+    totalLinks = all.size;
+  } catch {}
+
+  const logMsg =
+    `🗑️ **Invite deleted**\n` +
+    `Code: \`${inv.code}\`\n` +
+    `Channel: ${inv.channel ? `<#${inv.channel.id}>` : 'Unknown'}\n` +
+    `Total invites: **${totalLinks}**`;
+
+  addLog('invite_deleted', logMsg);
+  await sendLog(inv.guild, logMsg);
 });
 
 // ─── MEMBER JOIN ──────────────────────────────────────────────────────────────
@@ -487,7 +475,7 @@ client.on(Events.MessageCreate, async message => {
     if (wizards.has(message.author.id)) return message.reply('⚠️ You have an active wizard. Type `cancel` first.');
     wizards.set(message.author.id, { type: 'welcome', step: 0, data: {}, channelId: message.channel.id });
     return message.channel.send({ embeds: [
-      new EmbedBuilder().setColor(0x5865F2).setTitle('🛠️ Welcome Setup').setDescription('Let\'s set up your welcome embed step by step.\n\n' + WELCOME_STEPS[0].prompt),
+      new EmbedBuilder().setColor(0x5865F2).setTitle('🛠️ Welcome Setup').setDescription('Let\'s set up your welcome channel.\n\n' + WELCOME_STEPS[0].prompt),
       wizardStatusEmbed(WELCOME_STEPS, 0, settings, 'Welcome'),
     ]});
   }
@@ -514,7 +502,7 @@ client.on(Events.MessageCreate, async message => {
         .setColor(0x57F287)
         .setTitle('✅ Log Channel Set')
         .setDescription(
-          `Auto-revoke events and invite link creation/deletion logs will now be sent to <#${chId}>.\n\n` +
+          `Invite logs will now be sent to <#${chId}>.\n\n` +
           `Use \`!logs\` anytime to view the last 10 entries in this channel.`
         )
         .setTimestamp(),
@@ -527,7 +515,7 @@ client.on(Events.MessageCreate, async message => {
       return message.reply('📋 No log entries recorded yet. Logs appear when invites are created/deleted or auto-revoke runs.');
 
     const typeLabel = {
-      invite_created: '🔗 Invite Created',
+      invite_created: '📨 Invite Created',
       invite_deleted: '🗑️ Invite Deleted',
       auto_revoke:    '🧹 Auto-Revoke',
     };
@@ -781,9 +769,9 @@ client.on(Events.MessageCreate, async message => {
         {
           name: '\u{1F6E0}\uFE0F Setup',
           value:
-            '`!setwelcome` \u2014 set up the welcome embed\n' +
+            '`!setwelcome` \u2014 set the welcome channel\n' +
             '`!setevent` \u2014 post the BloxFruit event embed\n' +
-            '`!setlog #channel` \u2014 set the channel for live auto-revoke & invite logs',
+            '`!setlog #channel` \u2014 set the channel for invite & auto-revoke logs',
         },
         {
           name: '\u{1F4CB} Logs',
