@@ -25,11 +25,7 @@ const CONFIG = {
   TOKEN:              process.env.DISCORD_TOKEN,
   WELCOME_CHANNEL_ID: process.env.WELCOME_CHANNEL_ID,
   EVENT_CHANNEL_ID:   process.env.EVENT_CHANNEL_ID,
-  // Set EVENT_BANNER_URL in Railway env vars to a real hosted image URL
-  // e.g. https://i.imgur.com/abc123.png  — do NOT use attachment:// here
   EVENT_BANNER_URL:   process.env.EVENT_BANNER_URL ?? null,
-  // Set ADMIN_ROLE_ID in Railway env vars to a role ID for admin access
-  // Falls back to the native Administrator permission if not set
   ADMIN_ROLE_ID:      process.env.ADMIN_ROLE_ID ?? null,
   PREFIX:             '!',
   SWEEP_LINK_THRESHOLD: 1000,
@@ -47,13 +43,13 @@ const settings = {
   welcomeColor:     0xFFD700,
   welcomeBanner:    null,
   eventChannelId:   CONFIG.EVENT_CHANNEL_ID,
-  logChannelId:     null, // set via !setlog
+  logChannelId:     null,
 };
 
 // ─── INVITE TRACKING ─────────────────────────────────────────────────────────
-const inviteCache  = new Map(); // guildId -> Map<code, uses>
-const inviterStats = new Map(); // guildId -> Map<userId, inviteCount>
-const lastSweepAt  = new Map(); // guildId -> invite count at last sweep
+const inviteCache  = new Map();
+const inviterStats = new Map();
+const lastSweepAt  = new Map();
 
 function trackInviter(guildId, userId) {
   if (!inviterStats.has(guildId)) inviterStats.set(guildId, new Map());
@@ -62,8 +58,7 @@ function trackInviter(guildId, userId) {
 }
 
 // ─── LOG BUFFER ───────────────────────────────────────────────────────────────
-// In-memory store of last 50 log entries (shown by !logs)
-const logBuffer = []; // { time, type, description }
+const logBuffer = [];
 function addLog(type, description) {
   logBuffer.push({ time: Date.now(), type, description });
   if (logBuffer.length > 50) logBuffer.shift();
@@ -77,7 +72,6 @@ async function sendLog(guild, embed) {
 }
 
 // ─── PERMISSION CHECK ─────────────────────────────────────────────────────────
-// All commands: require Administrator flag OR the ADMIN_ROLE_ID role from env
 function memberIsAdmin(member) {
   if (member.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
   if (CONFIG.ADMIN_ROLE_ID && member.roles.cache.has(CONFIG.ADMIN_ROLE_ID)) return true;
@@ -85,7 +79,7 @@ function memberIsAdmin(member) {
 }
 
 // ─── WIZARD STATE ────────────────────────────────────────────────────────────
-const wizards = new Map(); // userId -> { type, step, data, channelId }
+const wizards = new Map();
 
 const WELCOME_STEPS = [
   {
@@ -162,11 +156,7 @@ function buildWelcomeEmbed(member, data, guild) {
   return embed;
 }
 
-// ─── EVENT — COMPONENTS V2 ────────────────────────────────────────────────────
-// FIX 1: Link buttons (style 5) must NOT have a custom_id — removed it
-// FIX 2: attachment:// URLs are not allowed without a real file upload.
-//         Set EVENT_BANNER_URL env var to a real hosted image URL instead.
-//         If not set, the media gallery block is simply skipped.
+// ─── EVENT — COMPONENTS  ────────────────────────────────────────────────────
 async function postEventComponents(channel) {
   const innerComponents = [
     {
@@ -175,7 +165,6 @@ async function postEventComponents(channel) {
     },
   ];
 
-  // Only include the media gallery if a real hosted URL is configured
   if (CONFIG.EVENT_BANNER_URL) {
     innerComponents.push({
       type: 12,
@@ -216,7 +205,6 @@ async function postEventComponents(channel) {
       type: 1,
       components: [
         {
-          // FIX: style 5 = LINK button — must NOT have custom_id
           type: 2, style: 5,
           label: 'Check Invite',
           url: 'https://discohook.app',
@@ -233,7 +221,7 @@ async function postEventComponents(channel) {
   );
 
   await channel.send({
-    flags: 32768, // IS_COMPONENTS_V2
+    flags: 32768,
     components: [
       {
         type: 17,
@@ -304,7 +292,6 @@ client.on(Events.InviteCreate, async inv => {
   c.set(inv.code, inv.uses);
   inviteCache.set(inv.guild.id, c);
 
-  // Log invite creation
   const createDesc =
     `**Code:** \`${inv.code}\`\n` +
     `**Created by:** ${inv.inviter?.tag ?? 'Unknown'} (${inv.inviter?.id ?? '?'})\n` +
@@ -319,7 +306,6 @@ client.on(Events.InviteCreate, async inv => {
     .setTimestamp()
   );
 
-  // ── Auto-Revoke threshold check ───────────────────────────────────────────
   try {
     const allInvites   = await inv.guild.invites.fetch();
     const currentCount = allInvites.size;
@@ -432,7 +418,6 @@ client.on(Events.InteractionCreate, async interaction => {
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot) return;
 
-  // ── Wizard replies — no extra permission check inside an active wizard ────
   const wizard = wizards.get(message.author.id);
   if (wizard && message.channel.id === wizard.channelId) {
     const steps = wizard.type === 'welcome' ? WELCOME_STEPS : EVENT_STEPS;
@@ -494,7 +479,6 @@ client.on(Events.MessageCreate, async message => {
   const args = message.content.slice(CONFIG.PREFIX.length).trim().split(/\s+/);
   const cmd  = args.shift().toLowerCase();
 
-  // ── ALL commands now require Administrator flag OR the ADMIN_ROLE_ID role ──
   if (!memberIsAdmin(message.member))
     return message.reply('❌ You need **Administrator** permission' + (CONFIG.ADMIN_ROLE_ID ? ' or the admin role' : '') + '.');
 
@@ -537,7 +521,7 @@ client.on(Events.MessageCreate, async message => {
     ]});
   }
 
-  // ── !logs — show recent log buffer ────────────────────────────────────────
+  // ── !logs ─────────────────────────────────────────────────────────────────
   if (cmd === 'logs') {
     if (!logBuffer.length)
       return message.reply('📋 No log entries recorded yet. Logs appear when invites are created/deleted or auto-revoke runs.');
@@ -548,7 +532,6 @@ client.on(Events.MessageCreate, async message => {
       auto_revoke:    '🧹 Auto-Revoke',
     };
 
-    // Show last 10, newest first
     const entries = [...logBuffer].reverse().slice(0, 10);
     const fields  = entries.map(e => ({
       name:  `${typeLabel[e.type] ?? e.type} — <t:${Math.floor(e.time / 1000)}:R>`,
@@ -592,7 +575,6 @@ client.on(Events.MessageCreate, async message => {
         } catch { failed++; }
       }
 
-      // Log the manual revoke to buffer and log channel
       const revokeDesc =
         `Manual revoke by **${message.author.tag}**\n` +
         `Deleted **${deleted}** link(s) with ≤ **${maxUses}** uses:\n` +
@@ -627,7 +609,7 @@ client.on(Events.MessageCreate, async message => {
     }
   }
 
-  // ── !invites — personal invite stats (or @mention) ────────────────────────
+  // ── !invites ──────────────────────────────────────────────────────────────
   if (cmd === 'invites') {
     try {
       const target     = message.mentions.users.first() ?? message.author;
@@ -682,7 +664,7 @@ client.on(Events.MessageCreate, async message => {
     }
   }
 
-  // ── !invitelb — invite leaderboard ────────────────────────────────────────
+  // ── !invitelb ─────────────────────────────────────────────────────────────
   if (cmd === 'invitelb') {
     try {
       const allInvites = await message.guild.invites.fetch();
@@ -728,7 +710,7 @@ client.on(Events.MessageCreate, async message => {
     }
   }
 
-  // ── !counts — total invite uses across the whole server ───────────────────
+  // ── !counts ───────────────────────────────────────────────────────────────
   if (cmd === 'counts') {
     try {
       const all        = await message.guild.invites.fetch();
@@ -812,11 +794,8 @@ client.on(Events.MessageCreate, async message => {
           value: '`!test` \u2014 full health check on the bot',
         },
         {
-          // ── CHANGED: was "⚙️ Automatic", now "⚙️ Auto-Revoke" ───────────
           name: '\u2699\uFE0F Auto-Revoke',
-          value:
-            '\u{1F44B} Welcome message on every join\n' +
-            `\u{1F9F9} Every **${CONFIG.SWEEP_LINK_THRESHOLD}** active invite links \u2014 auto-removes **${CONFIG.SWEEP_AMOUNT}** links with fewer than **${CONFIG.SWEEP_MIN_USES}** uses`,
+          value: '\u{1F9F9} Autorevoke',
         },
       )
       .setFooter({ text: `${message.guild.name} \u2022 BloxFruit Event Bot`, iconURL: message.guild.iconURL() })
@@ -825,7 +804,7 @@ client.on(Events.MessageCreate, async message => {
     return message.reply({ embeds: [embed] });
   }
 
-  // ── !test — health check ──────────────────────────────────────────────────
+  // ── !test ─────────────────────────────────────────────────────────────────
   if (cmd === 'test') {
     const ping   = client.ws.ping;
     const wCh    = message.guild.channels.cache.get(settings.welcomeChannelId);
